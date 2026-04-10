@@ -8,7 +8,20 @@
 # Usage (from the host):
 #   docker compose run --rm androidtest scripts/local-maestro.sh
 #   docker compose run --rm androidtest scripts/local-maestro.sh .maestro/setup-identity.yaml
-#   docker compose run --rm androidtest scripts/local-maestro.sh .maestro/pair-wizard-navigation.yaml
+#   docker compose run --rm androidtest scripts/local-maestro.sh \
+#     .maestro/setup-identity.yaml \
+#     --bootstrap-identity TestUser \
+#     .maestro/pair-wizard-navigation.yaml
+#
+# Args are processed left-to-right:
+#   *.yaml / *.yml             — run as a maestro flow file
+#   --bootstrap-identity NAME  — fire the debug-only `e2e_create_identity`
+#                                intent so the next flow starts from a
+#                                bootstrapped contact list state instead
+#                                of the fresh-install Setup screen.
+#                                Requires the app to have the seam compiled
+#                                in, which it does on debug builds.
+#                                See cwage/whoarewe#11.
 #
 # With no arguments, runs all flows in the .maestro/ directory in
 # alphabetical order (the same default as `maestro test .maestro/`).
@@ -17,16 +30,6 @@
 #   - Container has /dev/kvm passthrough (compose handles this)
 #   - The `android-avd` named volume is mounted at /data/avd (compose handles this)
 #   - The project is bind-mounted at /project (compose handles this)
-#
-# Notes on what this script *does not* do:
-#   - It does not bootstrap the bootstrapped-identity state for the
-#     pair-wizard-navigation flow. That's the wrapper script's job, not
-#     this one's. If you're running pair-wizard-navigation directly, you
-#     need to fire the `e2e_create_identity` intent yourself first via:
-#       adb shell am start -n com.whoarewe.app/.MainActivity --es e2e_create_identity TestUser
-#     For now, run `setup-identity.yaml` standalone or pass both flows
-#     in the right order with the bootstrap interleaved (mirrors what
-#     .github/workflows/integration-tests.yml does in CI).
 
 set -euo pipefail
 
@@ -37,6 +40,7 @@ APK_PATH="${APK_PATH:-app/build/outputs/apk/debug/app-debug.apk}"
 EMULATOR_PORT=5554
 EMULATOR_BOOT_TIMEOUT=180
 PIN="${PIN:-1234}"
+PKG="com.whoarewe.app"
 
 log() { printf '[local-maestro] %s\n' "$*"; }
 
@@ -170,10 +174,48 @@ adb -s "${EMULATOR_SERIAL}" install -r "${APK_PATH}" >/dev/null
 
 # ── run maestro ─────────────────────────────────────────────────────────────
 
+# No args → default: run every flow in .maestro/, no bootstrap.
 if [[ $# -eq 0 ]]; then
     set -- .maestro/
 fi
 
-log "Running maestro test $*"
-maestro test "$@"
-log "Maestro flow(s) passed."
+# Process args left-to-right. Flow files run via `maestro test`; the
+# `--bootstrap-identity NAME` step fires the debug `e2e_create_identity`
+# intent between flows so a subsequent flow can start from a contact-list
+# state instead of the fresh-install Setup screen. The two have to live
+# in the same script invocation (and thus the same emulator boot) so they
+# can share the device under adb.
+while [[ $# -gt 0 ]]; do
+    arg=$1
+    shift
+    case "$arg" in
+        --bootstrap-identity)
+            if [[ $# -eq 0 ]]; then
+                echo "ERROR: --bootstrap-identity requires a display name argument" >&2
+                exit 1
+            fi
+            display_name=$1
+            shift
+            log "Bootstrapping identity: ${display_name}"
+            adb -s "${EMULATOR_SERIAL}" shell am force-stop "${PKG}" >/dev/null
+            # `am start -W` blocks until the launch is complete (activity
+            # created + resumed), which means MainActivity.handleE2eIntent
+            # has run and its `runBlocking { bootstrapIdentityForE2e(...) }`
+            # has returned by the time the command exits. No fixed sleep,
+            # no race on slower hosts.
+            adb -s "${EMULATOR_SERIAL}" shell am start -W \
+                -n "${PKG}/.MainActivity" \
+                --es e2e_create_identity "${display_name}" >/dev/null
+            ;;
+        *.yaml|*.yml|.maestro/|.maestro)
+            log "Running maestro test ${arg}"
+            maestro test "${arg}"
+            ;;
+        *)
+            echo "ERROR: unknown arg: ${arg}" >&2
+            echo "       expected a maestro flow file (*.yaml) or --bootstrap-identity NAME" >&2
+            exit 1
+            ;;
+    esac
+done
+log "All maestro flows passed."

@@ -5,12 +5,25 @@ tags:
   - navigation
 ---
 
-# Assumes identity is already set up (run setup-identity first or pre-seed)
-# This tests the wizard navigation flow without actual QR scanning
+# Assumes identity has already been bootstrapped via the
+# `e2e_create_identity` debug intent in the workflow. See
+# `.github/workflows/integration-tests.yml` for the orchestration:
+# the workflow does `adb shell am start ... --es e2e_create_identity
+# TestUser` immediately before invoking this flow, which writes a
+# valid public key + sentinel encrypted blob + Identity row, so the
+# vm transitions straight into the contact list state on launch.
+#
+# launchApp here (without clearState) brings the existing app process
+# to foreground without wiping the bootstrapped state on disk.
+- launchApp:
+    clearState: false
 
-# From the contact list, tap the pair button
-- tapOn:
-    id: "Pair with someone"
+# From the contact list, tap the pair button. Maestro's `id:` selector
+# matches accessibility resource-id, which Compose icons don't have —
+# `"Pair with someone"` is the `contentDescription` of the IconButton's
+# Icon, exposed in the accessibility tree as content-desc, not id. Use
+# the short-form `tapOn` which matches text OR content-description.
+- tapOn: "Pair with someone"
 
 # Should see the wizard choose step
 - assertVisible: "Both of you need to scan each other's code. Who goes first?"
@@ -29,6 +42,7 @@ tags:
 - assertVisible: "Scan with camera"
 - assertVisible: "Import from image"
 
-# Go back to contacts
-- tapOn:
-    id: "Back"
+# Go back to contacts. Same content-description-not-id reasoning as
+# the "Pair with someone" tap above — `"Back"` is the contentDescription
+# on the wizard's `Icons.AutoMirrored.Filled.ArrowBack` navigation icon.
+- tapOn: "Back"

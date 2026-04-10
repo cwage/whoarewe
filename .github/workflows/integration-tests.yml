@@ -73,11 +73,11 @@ jobs:
     # emulator-runner`, no separately-installed maestro CLI. Whatever passes
     # locally passes here, and vice versa. cwage/whoarewe#13.
     #
-    # NOTE: only setup-identity.yaml is run here. pair-wizard-navigation.yaml
-    # depends on a debug intent (`e2e_create_identity`) that bootstraps an
-    # identity without going through BiometricPrompt — that intent and its
-    # bootstrap orchestration land in cwage/whoarewe#12, which will re-add
-    # pair-wizard-navigation to this job.
+    # Both flows run in a single container session: setup-identity.yaml on a
+    # fresh app state, then `--bootstrap-identity TestUser` fires the
+    # `e2e_create_identity` debug intent (cwage/whoarewe#11) so the vm
+    # transitions into the contact list, then pair-wizard-navigation.yaml
+    # walks the wizard from there. All in one emulator boot.
 
     steps:
       - uses: actions/checkout@v4
@@ -113,7 +113,10 @@ jobs:
           if [[ -n "${KVM_GID_VALUE}" ]]; then
             export KVM_GID="${KVM_GID_VALUE}"
           fi
-          docker compose run --rm androidtest scripts/local-maestro.sh .maestro/setup-identity.yaml
+          docker compose run --rm androidtest scripts/local-maestro.sh \
+            .maestro/setup-identity.yaml \
+            --bootstrap-identity TestUser \
+            .maestro/pair-wizard-navigation.yaml
 
       - name: Upload Maestro results
         if: always()
