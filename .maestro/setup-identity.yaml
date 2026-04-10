@@ -5,46 +5,39 @@ tags:
   - setup
 ---
 
-# Verifies the Setup screen UI on a fresh install — title, copy, button
-# enable/disable logic, and display name input. Stops short of tapping
-# "Create Identity" because the post-tap path is the system credential
-# bouncer (com.android.systemui), which Maestro cannot drive: there is
-# no `inputText` / `pressKey` route into the bouncer's PIN field.
+# Verifies the Setup screen UI on a fresh install: title (`WhoAreWe`),
+# the input field's label (`Your name`), the primary button (`Create
+# Identity`), and that typing into the input field actually lands the
+# text in the field. Stops short of tapping "Create Identity" because
+# the post-tap path is the system credential bouncer (com.android.systemui),
+# which Maestro cannot drive — there is no inputText / pressKey route
+# into the bouncer's PIN field. The actual "tap Create Identity →
+# biometric prompt → enter PIN → identity row written → contact list
+# visible" path is exercised by the adb-driven e2e job in
+# .github/workflows/e2e.yml.
 #
-# The actual "tap Create Identity → biometric prompt → enter PIN →
-# identity row written → contact list visible" path is exercised by the
-# adb-driven e2e job in .github/workflows/e2e.yml, which uses the
-# uiautomator dump + `input keyevent` keycode mapping to drive the
-# bouncer end-to-end on a real two-emulator setup.
+# We deliberately do NOT assert on the `"Verify the people you trust.\n
+# Create your identity to get started."` subtitle copy: it's a single
+# Compose `Text` composable with an embedded `\n`, and Maestro's text
+# matcher does not reliably match substrings across the newline in a
+# single text node.
+#
+# Each `assertVisible` below targets text that comes from a SINGLE Compose
+# `Text` composable with no embedded newlines.
 
-# Maestro 2.4.0 does NOT auto-launch the appId-declared app at the start
-# of a flow — it just attaches to whatever's on screen. Need an explicit
-# launchApp here, with clearState so a previous run's leftover data
-# can't pollute the "fresh install" assumption.
+# Maestro 2.x does NOT auto-launch the appId-declared app at the start of
+# a flow — it just attaches to whatever's on screen. Need an explicit
+# launchApp here, with clearState so a previous run's leftover data can't
+# pollute the "fresh install" assumption.
 - launchApp:
     clearState: true
 
 # Fresh install should show setup screen with all expected elements.
-# Each assertion below targets text that comes from a SINGLE Compose
-# `Text` composable (no embedded newlines). The previous version of
-# this file asserted on "Create your identity to get started", which
-# is half of a two-line `Text("Verify the people you trust.\nCreate
-# your identity to get started.")` — Maestro's text matcher doesn't
-# reliably match substrings across embedded `\n` in a single text
-# node, so it failed even though the text is rendered on screen.
 - assertVisible: "WhoAreWe"
 - assertVisible: "Your name"
 - assertVisible: "Create Identity"
 
-# Type a display name and verify it lands in the input field. We
-# deliberately do NOT verify the button enable/disable transition here:
-# Maestro has no top-level `assertEnabled` / `assertNotEnabled` command
-# (despite an older version of this file using them — the calls were
-# silently swallowed by `|| true`). The selector-level `enabled: true`
-# trick on `assertVisible` is unreliable across maestro versions, so
-# the button-state check belongs in an instrumented Compose test, not
-# here. This flow's contract is just "the Setup screen renders and
-# accepts text input."
+# Type a display name and verify it lands in the input field.
 - tapOn: "Your name"
 - inputText: "TestUser"
 - assertVisible: "TestUser"

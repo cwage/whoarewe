@@ -1,12 +1,64 @@
+# NOTE on user / group config:
+#
+# `HOST_UID` / `HOST_GID` and `KVM_GID` should be set to match the host
+# running this compose file, e.g.:
+#
+#     export HOST_UID=$(id -u) HOST_GID=$(id -g) KVM_GID=$(getent group kvm | cut -d: -f3)
+#     docker compose run --rm androidtest scripts/local-maestro.sh ...
+#
+# We can't use `${UID:-1000}` here because `UID` is a bash readonly built-in
+# that isn't exported to subprocess environments — docker compose only sees
+# environment variables in os.environ, not bash specials, so `${UID:-1000}`
+# always falls back to 1000 even on hosts where the actual UID is different.
+# That cost a CI run on cwage/whoarewe#14 to discover.
+#
+# Defaults work on hosts where uid/gid 1000 owns the project directory and
+# the kvm group has GID 109 (typical Ubuntu desktop). Override otherwise.
+
 services:
   build:
-    build: .
-    user: "${UID:-1000}:${GID:-1000}"
+    build:
+      context: .
+      target: build
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     volumes:
       - .:/project
       - gradle-cache:/gradle-cache
     working_dir: /project
     command: ["sleep", "infinity"]
 
+  # Heavyweight image used by `scripts/local-maestro.sh` (cwage/whoarewe#13).
+  # Includes the Android emulator, the API 28 system image, and the maestro
+  # CLI on top of the slim `build` stage.
+  #
+  # Requires `/dev/kvm` on the host (Linux only — KVM in Docker Desktop on
+  # macOS / Windows is not reliably supported). On a Linux host with a
+  # working /dev/kvm, the emulator boots in ~20s; without KVM it falls back
+  # to software TCG and takes 5+ minutes per boot, which defeats the entire
+  # point of having a local iteration loop.
+  androidtest:
+    build:
+      context: .
+      target: androidtest
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    devices:
+      - "/dev/kvm:/dev/kvm"
+    # KVM_GID is the host's `kvm` group GID — varies by distro. Adding it
+    # to the container user's supplementary groups grants /dev/kvm access
+    # via the device's group permissions. Defaults to 109 (Ubuntu desktop).
+    # On the GHA runner /dev/kvm is chmod 0666 via the workflow's "Enable
+    # KVM" step, so this is a redundant safety net there but matters for
+    # local hosts where /dev/kvm is mode 0660.
+    group_add:
+      - "${KVM_GID:-109}"
+    volumes:
+      - .:/project
+      - gradle-cache:/gradle-cache
+      - android-avd:/data/avd
+    working_dir: /project
+    # No default command — invoked via `docker compose run --rm androidtest
+    # scripts/local-maestro.sh ...` from the host.
+
 volumes:
   gradle-cache:
+  android-avd:
