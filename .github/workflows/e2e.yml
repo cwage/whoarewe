@@ -47,7 +47,8 @@ jobs:
           arch: x86_64
           profile: Nexus 6
           force-avd-creation: true
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          # -read-only is required so the second emulator can share the same AVD.
+          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -read-only
           disable-animations: true
           script: bash ./scripts/ci-e2e-pairing.sh
 
