@@ -25,7 +25,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.whoami.app.crypto.QrDecoder
 import com.whoami.app.ui.screens.ContactListScreen
-import com.whoami.app.ui.screens.QrDisplayScreen
+import com.whoami.app.ui.screens.PairWizardScreen
 import com.whoami.app.ui.screens.SetupScreen
 import com.whoami.app.ui.theme.WhoAmITheme
 
@@ -65,7 +65,6 @@ class MainActivity : FragmentActivity() {
 
                     BiometricGate(
                         request = biometricRequest,
-                        useBiometric = viewModel.keyManager.isBiometricAvailable(),
                         onSuccess = { cipher -> viewModel.onBiometricSuccess(cipher) },
                         onError = { error -> viewModel.onBiometricError(error) },
                         onCancelled = { viewModel.onBiometricCancelled() }
@@ -88,31 +87,38 @@ class MainActivity : FragmentActivity() {
                             )
                         }
                         is UiState.Main -> {
-                            if (state.showQr) {
+                            val pairStep = state.pairStep
+                            if (pairStep != null) {
                                 val publicKey = viewModel.keyManager.getPublicKeyBytes()
                                 if (publicKey != null) {
-                                    QrDisplayScreen(
+                                    PairWizardScreen(
+                                        step = pairStep,
                                         displayName = state.identity.displayName,
                                         publicKey = publicKey,
                                         fingerprint = state.fingerprint,
-                                        onBack = { viewModel.hideQr() }
+                                        error = state.error,
+                                        onScanCamera = {
+                                            val options = ScanOptions()
+                                                .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                                .setPrompt("Scan contact's WhoAmI QR code")
+                                                .setBeepEnabled(false)
+                                                .setOrientationLocked(false)
+                                            scanLauncher.launch(options)
+                                        },
+                                        onScanImage = {
+                                            imagePickerLauncher.launch("image/*")
+                                        },
+                                        onShowFirst = { viewModel.showMyCodeFirst() },
+                                        onReadyToScan = { viewModel.readyToScan() },
+                                        onDone = { viewModel.finishPairing() },
+                                        onBack = { viewModel.finishPairing() },
+                                        onClearError = { viewModel.clearError() }
                                     )
                                 }
                             } else {
                                 ContactListScreen(
                                     state = state,
-                                    onScanContact = {
-                                        val options = ScanOptions()
-                                            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                                            .setPrompt("Scan contact's WhoAmI QR code")
-                                            .setBeepEnabled(false)
-                                            .setOrientationLocked(true)
-                                        scanLauncher.launch(options)
-                                    },
-                                    onImportContact = {
-                                        imagePickerLauncher.launch("image/*")
-                                    },
-                                    onShowMyQr = { viewModel.showQr() },
+                                    onPair = { viewModel.startPairing() },
                                     onClearError = { viewModel.clearError() }
                                 )
                             }
@@ -127,7 +133,6 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun BiometricGate(
     request: BiometricRequest?,
-    useBiometric: Boolean,
     onSuccess: (javax.crypto.Cipher) -> Unit,
     onError: (String) -> Unit,
     onCancelled: () -> Unit
@@ -168,22 +173,14 @@ fun BiometricGate(
             }
         )
 
-        val promptInfo = if (useBiometric) {
-            BiometricPrompt.PromptInfo.Builder()
-                .setTitle("WhoAmI")
-                .setSubtitle(request.subtitle)
-                .setNegativeButtonText("Cancel")
-                .build()
-        } else {
-            BiometricPrompt.PromptInfo.Builder()
-                .setTitle("WhoAmI")
-                .setSubtitle(request.subtitle)
-                .setAllowedAuthenticators(
-                    BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                            BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                )
-                .build()
-        }
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+            .setTitle("WhoAmI")
+            .setSubtitle(request.subtitle)
+            .setAllowedAuthenticators(
+                BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                        BiometricManager.Authenticators.DEVICE_CREDENTIAL
+            )
+            .build()
 
         prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(request.cipher))
 

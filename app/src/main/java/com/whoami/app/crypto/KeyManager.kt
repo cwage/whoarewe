@@ -87,20 +87,13 @@ class KeyManager(private val context: Context) {
             .setUserAuthenticationRequired(true)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val authType = if (biometricAvailable) {
-                KeyProperties.AUTH_BIOMETRIC_STRONG
-            } else {
+            builder.setUserAuthenticationParameters(
+                0,
                 KeyProperties.AUTH_BIOMETRIC_STRONG or KeyProperties.AUTH_DEVICE_CREDENTIAL
-            }
-            builder.setUserAuthenticationParameters(0, authType)
+            )
         } else {
             @Suppress("DEPRECATION")
-            if (biometricAvailable) {
-                builder.setUserAuthenticationValidityDurationSeconds(0)
-            } else {
-                // On pre-R, duration=-1 with device credential fallback
-                builder.setUserAuthenticationValidityDurationSeconds(10)
-            }
+            builder.setUserAuthenticationValidityDurationSeconds(10)
         }
 
         val keyGenerator = KeyGenerator.getInstance(

@@ -8,6 +8,7 @@ import com.whoami.app.crypto.EcdhExchange
 import com.whoami.app.crypto.KeyManager
 import com.whoami.app.crypto.QrCodeUtils
 import com.whoami.app.crypto.TotpGenerator
+import com.whoami.app.ui.screens.PairStep
 import com.whoami.app.data.AppDatabase
 import com.whoami.app.data.Identity
 import com.whoami.app.data.TrustedContact
@@ -16,6 +17,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.crypto.Cipher
@@ -50,7 +52,7 @@ sealed class UiState {
         val contacts: List<ContactWithCode> = emptyList(),
         val fingerprint: String = "",
         val secondsRemaining: Int = 30,
-        val showQr: Boolean = false,
+        val pairStep: PairStep? = null,
         val error: String? = null
     ) : UiState()
 }
@@ -65,6 +67,8 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _biometricRequest = MutableStateFlow<BiometricRequest?>(null)
     val biometricRequest: StateFlow<BiometricRequest?> = _biometricRequest.asStateFlow()
+
+    private val _pairStep = MutableStateFlow<PairStep?>(null)
 
     private var pendingDisplayName: String? = null
 
@@ -98,7 +102,8 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
                         }
                         _uiState.value = state.copy(
                             contacts = contacts,
-                            secondsRemaining = remaining
+                            secondsRemaining = remaining,
+                            pairStep = _pairStep.value
                         )
                     }
 
@@ -106,8 +111,8 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
 
-            // Observe contacts from DB
-            dao.getAllContacts().collect { contacts ->
+            // Observe contacts and pair step together
+            dao.getAllContacts().combine(_pairStep) { contacts, pairStep ->
                 val now = System.currentTimeMillis()
                 val withCodes = contacts.map { contact ->
                     val secret = hexToBytes(contact.totpSecret)
@@ -117,14 +122,15 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
                 val remaining = TotpGenerator.secondsRemaining(now)
-                val current = _uiState.value
-                _uiState.value = UiState.Main(
+                UiState.Main(
                     identity = identity,
                     contacts = withCodes,
                     fingerprint = fingerprint,
                     secondsRemaining = remaining,
-                    showQr = if (current is UiState.Main) current.showQr else false
+                    pairStep = pairStep
                 )
+            }.collect { mainState ->
+                _uiState.value = mainState
             }
         }
     }
@@ -170,14 +176,17 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun onQrScanned(rawData: String) {
+        Log.d("WhoAmI", "onQrScanned: $rawData")
         val payload = QrCodeUtils.decode(rawData)
         if (payload == null) {
+            Log.d("WhoAmI", "onQrScanned: invalid QR payload")
             val state = _uiState.value
             if (state is UiState.Main) {
                 _uiState.value = state.copy(error = "Invalid QR code")
             }
             return
         }
+        Log.d("WhoAmI", "onQrScanned: decoded ${payload.displayName}")
 
         // Check if we already have this contact
         viewModelScope.launch {
@@ -185,6 +194,7 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
                 payload.publicKey.joinToString("") { "%02x".format(it) }
             )
             if (existing != null) {
+                Log.d("WhoAmI", "onQrScanned: contact already exists")
                 val state = _uiState.value
                 if (state is UiState.Main) {
                     _uiState.value = state.copy(
@@ -194,6 +204,7 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
                 return@launch
             }
 
+            Log.d("WhoAmI", "onQrScanned: requesting biometric for ECDH")
             // Need biometric to decrypt our private key for ECDH
             try {
                 val cipher = keyManager.getDecryptionCipher()
@@ -213,6 +224,7 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun onBiometricSuccess(cipher: Cipher) {
+        Log.d("WhoAmI", "onBiometricSuccess")
         val request = _biometricRequest.value ?: return
         _biometricRequest.value = null
 
@@ -269,6 +281,10 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
                                 ourPrivateKey.fill(0)
                             }
                         }
+                        // Advance wizard: show our QR so they can scan us
+                        Log.d("WhoAmI", "AddContact complete, advancing to ShowAfterScan")
+                        _pairStep.value = PairStep.ShowAfterScan(payload.displayName)
+                        Log.d("WhoAmI", "pairStep is now: ${_pairStep.value}")
                     }
                 }
             } catch (e: Exception) {
@@ -278,18 +294,20 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun showQr() {
-        val state = _uiState.value
-        if (state is UiState.Main) {
-            _uiState.value = state.copy(showQr = true)
-        }
+    fun startPairing() {
+        _pairStep.value = PairStep.Choose
     }
 
-    fun hideQr() {
-        val state = _uiState.value
-        if (state is UiState.Main) {
-            _uiState.value = state.copy(showQr = false)
-        }
+    fun showMyCodeFirst() {
+        _pairStep.value = PairStep.ShowFirst
+    }
+
+    fun readyToScan() {
+        _pairStep.value = PairStep.ScanAfterShow
+    }
+
+    fun finishPairing() {
+        _pairStep.value = null
     }
 
     fun clearError() {
