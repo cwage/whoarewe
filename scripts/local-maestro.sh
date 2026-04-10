@@ -198,12 +198,14 @@ while [[ $# -gt 0 ]]; do
             shift
             log "Bootstrapping identity: ${display_name}"
             adb -s "${EMULATOR_SERIAL}" shell am force-stop "${PKG}" >/dev/null
-            adb -s "${EMULATOR_SERIAL}" shell am start \
+            # `am start -W` blocks until the launch is complete (activity
+            # created + resumed), which means MainActivity.handleE2eIntent
+            # has run and its `runBlocking { bootstrapIdentityForE2e(...) }`
+            # has returned by the time the command exits. No fixed sleep,
+            # no race on slower hosts.
+            adb -s "${EMULATOR_SERIAL}" shell am start -W \
                 -n "${PKG}/.MainActivity" \
                 --es e2e_create_identity "${display_name}" >/dev/null
-            # Give the activity a moment to come up so the runBlocking
-            # bootstrap intent handler completes before the next flow.
-            sleep 1
             ;;
         *.yaml|*.yml|.maestro/|.maestro)
             log "Running maestro test ${arg}"

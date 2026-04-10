@@ -147,6 +147,15 @@ class MainActivity : FragmentActivity() {
      * on a real installation can't brick the user's keys.
      */
     private suspend fun bootstrapIdentityForE2e(displayName: String) {
+        // Preserve the same display-name invariant the production Setup flow
+        // enforces: trim whitespace, refuse blanks. The seam should not let
+        // a Maestro test create an identity that the real UI couldn't.
+        val trimmedName = displayName.trim()
+        if (trimmedName.isBlank()) {
+            Log.w("WhoAreWe-E2E", "e2e_create_identity refused: display name is blank")
+            return
+        }
+
         val keyManager = KeyManager(applicationContext)
         val dao = AppDatabase.getInstance(applicationContext).contactDao()
 
@@ -162,13 +171,19 @@ class MainActivity : FragmentActivity() {
 
         keyManager.e2eWriteIdentityFilesForTest(publicKey)
 
+        // NOTE: the `joinToString { "%02x".format(it) }` byte→hex pattern
+        // below is buggy for bytes >= 0x80 (sign-extension), but it matches
+        // the same pattern used elsewhere in production code paths so the
+        // dedup lookup `getContactByPublicKey` still finds this row. Fixing
+        // it requires fixing all call sites at once. Tracked as
+        // cwage/whoarewe#15.
         val identity = Identity(
-            displayName = displayName,
+            displayName = trimmedName,
             publicKey = publicKey.joinToString("") { "%02x".format(it) }
         )
         dao.saveIdentity(identity)
 
-        Log.i("WhoAreWe-E2E", "Bootstrapped identity for '$displayName'")
+        Log.i("WhoAreWe-E2E", "Bootstrapped identity for '$trimmedName'")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
