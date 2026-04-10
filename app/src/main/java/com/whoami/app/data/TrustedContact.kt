@@ -8,6 +8,7 @@ data class TrustedContact(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val displayName: String,
     val publicKey: String,
+    val totpSecret: String,
     val verifiedAt: Long = System.currentTimeMillis(),
     val notes: String? = null
 )

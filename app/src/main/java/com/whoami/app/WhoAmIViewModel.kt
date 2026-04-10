@@ -4,7 +4,9 @@ import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.whoami.app.crypto.EcdhExchange
 import com.whoami.app.crypto.KeyManager
+import com.whoami.app.crypto.QrCodeUtils
 import com.whoami.app.crypto.TotpGenerator
 import com.whoami.app.data.AppDatabase
 import com.whoami.app.data.Identity
@@ -12,17 +14,15 @@ import com.whoami.app.data.TrustedContact
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.crypto.Cipher
 
 sealed class BiometricPurpose {
     data object Generate : BiometricPurpose()
+    data class AddContact(val payload: QrCodeUtils.QrPayload) : BiometricPurpose()
 }
 
 data class BiometricRequest(
@@ -49,7 +49,9 @@ sealed class UiState {
         val identity: Identity,
         val contacts: List<ContactWithCode> = emptyList(),
         val fingerprint: String = "",
-        val secondsRemaining: Int = 30
+        val secondsRemaining: Int = 30,
+        val showQr: Boolean = false,
+        val error: String? = null
     ) : UiState()
 }
 
@@ -89,32 +91,39 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
 
                     val state = _uiState.value
                     if (state is UiState.Main) {
-                        _uiState.value = state.copy(secondsRemaining = remaining)
+                        // Regenerate codes every tick
+                        val contacts = state.contacts.map { cwc ->
+                            val secret = hexToBytes(cwc.contact.totpSecret)
+                            cwc.copy(code = TotpGenerator.generateCode(secret, now))
+                        }
+                        _uiState.value = state.copy(
+                            contacts = contacts,
+                            secondsRemaining = remaining
+                        )
                     }
 
-                    // Sleep until next second
                     delay(1000)
                 }
             }
 
-            // Observe contacts and generate codes
+            // Observe contacts from DB
             dao.getAllContacts().collect { contacts ->
                 val now = System.currentTimeMillis()
                 val withCodes = contacts.map { contact ->
-                    // TODO: derive TOTP secret from ECDH shared secret
-                    // For now, use a placeholder — codes will be wired up
-                    // when QR exchange + ECDH is implemented
+                    val secret = hexToBytes(contact.totpSecret)
                     ContactWithCode(
                         contact = contact,
-                        code = "------"
+                        code = TotpGenerator.generateCode(secret, now)
                     )
                 }
                 val remaining = TotpGenerator.secondsRemaining(now)
+                val current = _uiState.value
                 _uiState.value = UiState.Main(
                     identity = identity,
                     contacts = withCodes,
                     fingerprint = fingerprint,
-                    secondsRemaining = remaining
+                    secondsRemaining = remaining,
+                    showQr = if (current is UiState.Main) current.showQr else false
                 )
             }
         }
@@ -160,17 +169,60 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun onQrScanned(rawData: String) {
+        val payload = QrCodeUtils.decode(rawData)
+        if (payload == null) {
+            val state = _uiState.value
+            if (state is UiState.Main) {
+                _uiState.value = state.copy(error = "Invalid QR code")
+            }
+            return
+        }
+
+        // Check if we already have this contact
+        viewModelScope.launch {
+            val existing = dao.getContactByPublicKey(
+                payload.publicKey.joinToString("") { "%02x".format(it) }
+            )
+            if (existing != null) {
+                val state = _uiState.value
+                if (state is UiState.Main) {
+                    _uiState.value = state.copy(
+                        error = "${payload.displayName} is already in your contacts"
+                    )
+                }
+                return@launch
+            }
+
+            // Need biometric to decrypt our private key for ECDH
+            try {
+                val cipher = keyManager.getDecryptionCipher()
+                _biometricRequest.value = BiometricRequest(
+                    cipher = cipher,
+                    purpose = BiometricPurpose.AddContact(payload),
+                    subtitle = "Authenticate to add ${payload.displayName}"
+                )
+            } catch (e: Exception) {
+                Log.e("WhoAmI", "Failed to get cipher for ECDH", e)
+                val state = _uiState.value
+                if (state is UiState.Main) {
+                    _uiState.value = state.copy(error = e.message ?: "Authentication failed")
+                }
+            }
+        }
+    }
+
     fun onBiometricSuccess(cipher: Cipher) {
         val request = _biometricRequest.value ?: return
         _biometricRequest.value = null
 
         viewModelScope.launch {
             try {
-                when (request.purpose) {
+                when (val purpose = request.purpose) {
                     is BiometricPurpose.Generate -> {
                         val result = keyManager.generateKey(cipher)
                         result.fold(
-                            onSuccess = { fingerprint ->
+                            onSuccess = {
                                 val name = pendingDisplayName ?: "Me"
                                 val pubKeyHex = keyManager.getPublicKeyHex() ?: ""
                                 val identity = Identity(
@@ -190,6 +242,34 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         )
                     }
+
+                    is BiometricPurpose.AddContact -> {
+                        val payload = purpose.payload
+                        withContext(Dispatchers.IO) {
+                            val ourPrivateKey = keyManager.decryptPrivateKey(cipher)
+                            try {
+                                val sharedSecret = EcdhExchange.deriveSharedSecret(
+                                    ourPrivateKey,
+                                    payload.publicKey
+                                )
+                                val pubKeyHex = payload.publicKey.joinToString("") {
+                                    "%02x".format(it)
+                                }
+                                val secretHex = sharedSecret.joinToString("") {
+                                    "%02x".format(it)
+                                }
+                                val contact = TrustedContact(
+                                    displayName = payload.displayName,
+                                    publicKey = pubKeyHex,
+                                    totpSecret = secretHex
+                                )
+                                dao.insertContact(contact)
+                                sharedSecret.fill(0)
+                            } finally {
+                                ourPrivateKey.fill(0)
+                            }
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("WhoAmI", "Biometric operation failed", e)
@@ -198,19 +278,45 @@ class WhoAmIViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun showQr() {
+        val state = _uiState.value
+        if (state is UiState.Main) {
+            _uiState.value = state.copy(showQr = true)
+        }
+    }
+
+    fun hideQr() {
+        val state = _uiState.value
+        if (state is UiState.Main) {
+            _uiState.value = state.copy(showQr = false)
+        }
+    }
+
+    fun clearError() {
+        val state = _uiState.value
+        if (state is UiState.Main) {
+            _uiState.value = state.copy(error = null)
+        }
+    }
+
     fun onBiometricError(error: String) {
         _biometricRequest.value = null
-        val state = _uiState.value
-        if (state is UiState.Setup) {
-            _uiState.value = state.copy(isGenerating = false, error = error)
+        when (val state = _uiState.value) {
+            is UiState.Setup -> _uiState.value = state.copy(isGenerating = false, error = error)
+            is UiState.Main -> _uiState.value = state.copy(error = error)
+            else -> {}
         }
     }
 
     fun onBiometricCancelled() {
         _biometricRequest.value = null
-        val state = _uiState.value
-        if (state is UiState.Setup) {
-            _uiState.value = state.copy(isGenerating = false)
+        when (val state = _uiState.value) {
+            is UiState.Setup -> _uiState.value = state.copy(isGenerating = false)
+            else -> {}
         }
+    }
+
+    private fun hexToBytes(hex: String): ByteArray {
+        return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
 }

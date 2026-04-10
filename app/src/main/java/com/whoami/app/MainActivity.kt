@@ -1,7 +1,9 @@
 package com.whoami.app
 
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.layout.Box
@@ -19,7 +21,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
+import com.whoami.app.crypto.QrDecoder
 import com.whoami.app.ui.screens.ContactListScreen
+import com.whoami.app.ui.screens.QrDisplayScreen
 import com.whoami.app.ui.screens.SetupScreen
 import com.whoami.app.ui.theme.WhoAmITheme
 
@@ -35,6 +41,27 @@ class MainActivity : FragmentActivity() {
                     val viewModel: WhoAmIViewModel = viewModel()
                     val uiState by viewModel.uiState.collectAsState()
                     val biometricRequest by viewModel.biometricRequest.collectAsState()
+
+                    val context = LocalContext.current
+
+                    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+                        result.contents?.let { contents ->
+                            viewModel.onQrScanned(contents)
+                        }
+                    }
+
+                    val imagePickerLauncher = rememberLauncherForActivityResult(
+                        ActivityResultContracts.GetContent()
+                    ) { uri ->
+                        if (uri != null) {
+                            val data = QrDecoder.decodeFromUri(context, uri)
+                            if (data != null) {
+                                viewModel.onQrScanned(data)
+                            } else {
+                                viewModel.onBiometricError("No QR code found in image")
+                            }
+                        }
+                    }
 
                     BiometricGate(
                         request = biometricRequest,
@@ -61,11 +88,34 @@ class MainActivity : FragmentActivity() {
                             )
                         }
                         is UiState.Main -> {
-                            ContactListScreen(
-                                state = state,
-                                onAddContact = { /* TODO: QR scan */ },
-                                onShowMyQr = { /* TODO: show QR */ }
-                            )
+                            if (state.showQr) {
+                                val publicKey = viewModel.keyManager.getPublicKeyBytes()
+                                if (publicKey != null) {
+                                    QrDisplayScreen(
+                                        displayName = state.identity.displayName,
+                                        publicKey = publicKey,
+                                        fingerprint = state.fingerprint,
+                                        onBack = { viewModel.hideQr() }
+                                    )
+                                }
+                            } else {
+                                ContactListScreen(
+                                    state = state,
+                                    onScanContact = {
+                                        val options = ScanOptions()
+                                            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                            .setPrompt("Scan contact's WhoAmI QR code")
+                                            .setBeepEnabled(false)
+                                            .setOrientationLocked(true)
+                                        scanLauncher.launch(options)
+                                    },
+                                    onImportContact = {
+                                        imagePickerLauncher.launch("image/*")
+                                    },
+                                    onShowMyQr = { viewModel.showQr() },
+                                    onClearError = { viewModel.clearError() }
+                                )
+                            }
                         }
                     }
                 }
@@ -125,7 +175,6 @@ fun BiometricGate(
                 .setNegativeButtonText("Cancel")
                 .build()
         } else {
-            // Device credential fallback (PIN/pattern/password)
             BiometricPrompt.PromptInfo.Builder()
                 .setTitle("WhoAmI")
                 .setSubtitle(request.subtitle)

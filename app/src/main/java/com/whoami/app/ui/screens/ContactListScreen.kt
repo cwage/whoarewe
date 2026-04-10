@@ -15,7 +15,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -25,41 +26,62 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.whoami.app.ContactWithCode
 import com.whoami.app.UiState
+import com.whoami.app.crypto.TotpGenerator
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ContactListScreen(
     state: UiState.Main,
-    onAddContact: () -> Unit,
-    onShowMyQr: () -> Unit
+    onScanContact: () -> Unit,
+    onImportContact: () -> Unit,
+    onShowMyQr: () -> Unit,
+    onClearError: () -> Unit
 ) {
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(state.error) {
+        if (state.error != null) {
+            snackbarHostState.showSnackbar(state.error)
+            onClearError()
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("WhoAmI") },
                 actions = {
-                    IconButton(onClick = onAddContact) {
-                        Icon(Icons.Default.PersonAdd, contentDescription = "Add Contact")
+                    IconButton(onClick = onScanContact) {
+                        Icon(Icons.Default.CameraAlt, contentDescription = "Scan QR Code")
+                    }
+                    IconButton(onClick = onImportContact) {
+                        Icon(Icons.Default.Image, contentDescription = "Import QR from Image")
                     }
                     IconButton(onClick = onShowMyQr) {
                         Icon(Icons.Default.QrCode, contentDescription = "My QR Code")
                     }
                 }
             )
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -104,7 +126,7 @@ private fun EmptyState() {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Tap + to add a contact by scanning their QR code, or share yours via the QR button above.",
+            text = "Scan a contact's QR code with the camera, or import a QR screenshot from your gallery.",
             style = MaterialTheme.typography.bodyMedium,
             textAlign = TextAlign.Center,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -136,7 +158,7 @@ private fun ContactRow(
     secondsRemaining: Int
 ) {
     val progress = animateFloatAsState(
-        targetValue = secondsRemaining / 30f,
+        targetValue = secondsRemaining / TotpGenerator.PERIOD_SECONDS.toFloat(),
         label = "timer"
     )
 

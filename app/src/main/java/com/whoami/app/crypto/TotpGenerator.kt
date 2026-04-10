@@ -4,7 +4,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 object TotpGenerator {
-    private const val PERIOD_SECONDS = 30L
+    const val PERIOD_SECONDS = 60L
     private const val DIGITS = 6
 
     fun generateCode(secret: ByteArray, timeMillis: Long = System.currentTimeMillis()): String {
