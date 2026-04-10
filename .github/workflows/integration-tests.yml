@@ -110,35 +110,19 @@ jobs:
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
-            set -eu
-            # NOTE: android-emulator-runner runs this via `/bin/sh -c`, which
-            # is dash on Ubuntu — no `pipefail`. The script has no pipes so
-            # this is fine; just don't add `-o pipefail` here.
-            # Set up device PIN for biometric tests
+            # IMPORTANT: android-emulator-runner runs each line of this block
+            # as its own `sh -c` invocation, not as one continuous script. That
+            # means: no `\` line continuations (each line is a separate shell
+            # context), no `set -eu` (it sets options on a shell that exits
+            # immediately), no shared variables. The runner already fails the
+            # step on any line that returns non-zero, so we don't need
+            # explicit error handling here. If this script ever needs real
+            # bash features, move it to a file and invoke `bash scripts/...`.
             adb shell locksettings set-pin 1234
-            # Install the APK
             adb install app/build/outputs/apk/debug/app-debug.apk
-
-            # Flow 1: setup-identity. This verifies the Setup screen UI on a
-            # fresh install and stops short of tapping "Create Identity",
-            # because Maestro can't drive the system credential bouncer.
-            # The post-tap path is covered by the e2e job in e2e.yml.
             maestro test .maestro/setup-identity.yaml
-
-            # Bootstrap an identity for the next flow. The pair-wizard
-            # navigation test needs to start from the contact list, which
-            # requires an existing identity — and the only way to create one
-            # without driving the bouncer is the debug-only e2e_create_identity
-            # intent (cwage/whoarewe#11). Force-stop first so the seam runs
-            # in MainActivity.onCreate (synchronously, before the vm spins
-            # up its own identity check), not via onNewIntent on a stale
-            # process state.
             adb shell am force-stop com.whoarewe.app
-            adb shell am start \
-              -n com.whoarewe.app/.MainActivity \
-              --es e2e_create_identity TestUser
-
-            # Flow 2: pair-wizard navigation against the bootstrapped state.
+            adb shell am start -n com.whoarewe.app/.MainActivity --es e2e_create_identity TestUser
             maestro test .maestro/pair-wizard-navigation.yaml
 
       - name: Upload Maestro results
