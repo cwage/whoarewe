@@ -49,31 +49,7 @@ jobs:
           force-avd-creation: true
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
-          script: |
-            set -eux
-
-            # The runner already booted emulator-5554. Launch a second one on
-            # port 5556 in the background using the same AVD definition the
-            # runner created.
-            AVD=$(emulator -list-avds | head -1)
-            echo "[e2e] using AVD: $AVD"
-
-            nohup emulator -avd "$AVD" \
-                -port 5556 \
-                -no-snapshot-save -no-window -gpu swiftshader_indirect \
-                -noaudio -no-boot-anim -read-only \
-                > /tmp/emulator-5556.log 2>&1 &
-
-            adb -s emulator-5556 wait-for-device
-            # Wait until the second device finishes booting.
-            for i in $(seq 1 180); do
-              val=$(adb -s emulator-5556 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
-              if [ "$val" = "1" ]; then break; fi
-              sleep 1
-            done
-            adb devices
-
-            bash ./scripts/e2e-pairing.sh emulator-5554 emulator-5556
+          script: bash ./scripts/ci-e2e-pairing.sh
 
       - name: Upload e2e artifacts
         if: always()
