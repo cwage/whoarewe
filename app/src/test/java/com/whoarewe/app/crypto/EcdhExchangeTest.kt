@@ -92,8 +92,16 @@ class EcdhExchangeTest {
         val secretAlice = EcdhExchange.deriveSharedSecret(alicePrivate, bobPublic)
         val secretBob = EcdhExchange.deriveSharedSecret(bobPrivate, alicePublic)
 
-        // Verify TOTP codes match at several different times
-        val times = listOf(0L, 60_000L, 1_000_000_000L * 1000, System.currentTimeMillis())
+        // Verify TOTP codes match at several different times — including a sample
+        // straddling a wall-clock period boundary, since both sides should still
+        // agree as long as their inputs to generateCode are identical.
+        val periodMillis = TotpGenerator.PERIOD_SECONDS * 1000
+        val times = listOf(
+            0L,
+            periodMillis,
+            1_000_000_000L * 1000,
+            System.currentTimeMillis()
+        )
         for (time in times) {
             val codeAlice = TotpGenerator.generateCode(secretAlice, time)
             val codeBob = TotpGenerator.generateCode(secretBob, time)

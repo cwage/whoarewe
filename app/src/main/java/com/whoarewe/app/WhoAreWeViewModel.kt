@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.crypto.Cipher
@@ -51,7 +52,7 @@ sealed class UiState {
         val identity: Identity,
         val contacts: List<ContactWithCode> = emptyList(),
         val fingerprint: String = "",
-        val secondsRemaining: Int = 30,
+        val secondsRemaining: Int = TotpGenerator.PERIOD_SECONDS.toInt(),
         val pairStep: PairStep? = null,
         val error: String? = null
     ) : UiState()
@@ -336,5 +337,16 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
 
     private fun hexToBytes(hex: String): ByteArray {
         return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    }
+
+    /**
+     * Debug-only: returns `(displayName, totpSecretHex)` pairs for every stored
+     * contact. Used by `MainActivity.handleE2eIntent` for the e2e_dump_secrets
+     * seam, which is how `scripts/e2e-pairing.sh` asserts cross-device shared
+     * secret agreement. Goes through the existing dao so the DB is never
+     * touched on the main thread for the first time from a debug intent.
+     */
+    suspend fun e2eDumpContactSecrets(): List<Pair<String, String>> {
+        return dao.getAllContacts().first().map { it.displayName to it.totpSecret }
     }
 }

@@ -7,7 +7,7 @@ Four layers, each covering different concerns. For trying the app out by hand on
 Pure-JVM tests in `app/src/test/`. Cover the deterministic math that does not need a device:
 
 - **`EcdhExchangeTest`** — X25519 shared-secret derivation, including the commutativity property: `mix(a_priv, b_pub) == mix(b_priv, a_pub)`.
-- **`TotpGeneratorTest`** — RFC 6238 TOTP generation at known vectors and 60-second window math.
+- **`TotpGeneratorTest`** — RFC 6238 TOTP generation at known vectors and step-window math. The step size derives from `TotpGenerator.PERIOD_SECONDS` so the tests follow the production tunable.
 - **`QrCodeUtilsTest`** — encode/decode round-trip, malformed payload rejection.
 
 Fast. Runs on every commit. No device, emulator, or Android runtime required.

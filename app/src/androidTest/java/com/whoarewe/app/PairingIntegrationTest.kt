@@ -103,10 +103,11 @@ class PairingIntegrationTest {
         assertArrayEquals("ECDH shared secrets must match", aliceSecret, bobSecret)
 
         // Verify TOTP codes match at multiple time windows
+        val periodMillis = TotpGenerator.PERIOD_SECONDS * 1000
         val times = listOf(
             System.currentTimeMillis(),
-            System.currentTimeMillis() + 60_000,
-            System.currentTimeMillis() + 120_000,
+            System.currentTimeMillis() + periodMillis,
+            System.currentTimeMillis() + (2 * periodMillis),
             1_000_000_000L * 1000
         )
         for (time in times) {
