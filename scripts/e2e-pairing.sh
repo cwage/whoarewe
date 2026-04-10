@@ -312,8 +312,9 @@ inject_qr() {
 }
 
 # Dump every stored TOTP shared secret on a device. Returns lines of the form
-# "<displayName>=<hex>" — typically just one line in the e2e flow since each
-# device has exactly one paired contact.
+# "<hex>=<displayName>" — hex on the left because [0-9a-f]+ cannot contain `=`,
+# so the format stays unambiguous even if a display name contains `=`. Typically
+# just one line in the e2e flow since each device has exactly one paired contact.
 dump_secrets() {
     local s=$1 i=0
     adb -s "$s" logcat -c >/dev/null 2>&1 || true
@@ -333,10 +334,20 @@ dump_secrets() {
     return 1
 }
 
-# Look up a single contact's secret hex from a device's stored contacts.
+# Look up a single contact's secret hex from a device's stored contacts. Splits
+# each "<hex>=<displayName>" line on the FIRST `=` only and reassembles the
+# right-hand side as the name, so display names containing `=` still match.
 secret_for() {
     local s=$1 contact=$2
-    dump_secrets "$s" | awk -F= -v c="$contact" '$1==c {print $2; exit}'
+    dump_secrets "$s" | awk -v c="$contact" '
+        {
+            i = index($0, "=")
+            if (i == 0) next
+            hex = substr($0, 1, i - 1)
+            name = substr($0, i + 1)
+            if (name == c) { print hex; exit }
+        }
+    '
 }
 
 # ── verification ─────────────────────────────────────────────────────────────

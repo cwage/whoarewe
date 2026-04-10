@@ -30,7 +30,6 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.whoarewe.app.crypto.QrCodeUtils
 import com.whoarewe.app.crypto.QrDecoder
-import com.whoarewe.app.data.AppDatabase
 import com.whoarewe.app.ui.screens.ContactListScreen
 import com.whoarewe.app.ui.screens.PairWizardScreen
 import com.whoarewe.app.ui.screens.SetupScreen
@@ -51,11 +50,14 @@ class MainActivity : FragmentActivity() {
      *   --es e2e_inject_qr <s>      → feed the string into the normal onQrScanned() pipeline,
      *                                 skipping the photo picker / camera scanner UI.
      *   --ez e2e_dump_secrets true  → log every stored TOTP shared secret as
-     *                                 "SECRET_DUMP: <displayName>=<hex>". The e2e test
-     *                                 compares these directly across devices, which
-     *                                 asserts the cryptographic invariant without
-     *                                 dragging the displayed code through wall-clock
-     *                                 TOTP window timing.
+     *                                 "SECRET_DUMP: <hex>=<displayName>". The hex is
+     *                                 a fixed [0-9a-f]+ alphabet so it cannot contain
+     *                                 the `=` delimiter, which makes the format safe
+     *                                 even when display names contain `=`. The e2e
+     *                                 test compares the hex directly across devices,
+     *                                 which asserts the cryptographic invariant
+     *                                 without dragging the displayed code through
+     *                                 wall-clock TOTP window timing.
      * Bypassed entirely on release builds.
      */
     private fun handleE2eIntent(intent: Intent?) {
@@ -86,14 +88,14 @@ class MainActivity : FragmentActivity() {
 
         if (intent.getBooleanExtra("e2e_dump_secrets", false)) {
             intent.removeExtra("e2e_dump_secrets")
-            val dao = AppDatabase.getInstance(applicationContext).contactDao()
+            val vm = ViewModelProvider(this)[WhoAreWeViewModel::class.java]
             lifecycleScope.launch {
-                val contacts = dao.getAllContacts().first()
-                if (contacts.isEmpty()) {
+                val secrets = vm.e2eDumpContactSecrets()
+                if (secrets.isEmpty()) {
                     Log.i("WhoAreWe-E2E", "SECRET_DUMP_FAIL: no contacts")
                 } else {
-                    for (c in contacts) {
-                        Log.i("WhoAreWe-E2E", "SECRET_DUMP: ${c.displayName}=${c.totpSecret}")
+                    for ((name, hex) in secrets) {
+                        Log.i("WhoAreWe-E2E", "SECRET_DUMP: $hex=$name")
                     }
                 }
             }
