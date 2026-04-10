@@ -249,11 +249,15 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
             try {
                 // Legacy path: cipher is null because we deferred init until
                 // after the prompt refreshed the auth window. Acquire it now,
-                // inside that window.
+                // inside that window — and on a background dispatcher, since
+                // both getEncryptionCipher() and getDecryptionCipher() touch
+                // AndroidKeyStore (and the latter reads the IV file from disk).
                 val activeCipher: Cipher = cipher ?: try {
-                    when (request.purpose) {
-                        is BiometricPurpose.Generate -> keyManager.getEncryptionCipher()
-                        is BiometricPurpose.AddContact -> keyManager.getDecryptionCipher()
+                    withContext(Dispatchers.IO) {
+                        when (request.purpose) {
+                            is BiometricPurpose.Generate -> keyManager.getEncryptionCipher()
+                            is BiometricPurpose.AddContact -> keyManager.getDecryptionCipher()
+                        }
                     }
                 } catch (e: Exception) {
                     Log.e("WhoAreWe", "Post-auth cipher init failed", e)
