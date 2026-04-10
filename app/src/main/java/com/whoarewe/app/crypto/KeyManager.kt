@@ -196,6 +196,28 @@ class KeyManager(private val context: Context) {
         return cipher.doFinal(encrypted)
     }
 
+    /**
+     * Debug seam used by `MainActivity.handleE2eIntent.e2e_create_identity`
+     * (cwage/whoarewe#11). Writes a real public key file plus a sentinel
+     * encrypted-key blob, so `hasKey()` returns true and the vm transitions
+     * straight into the main contact list state without ever invoking
+     * `BiometricPrompt` or touching Android Keystore.
+     *
+     * The encrypted blob is intentionally garbage. Any code path that tries
+     * to call `decryptPrivateKey` against it will fail. The only consumer of
+     * this state — the Maestro `pair-wizard-navigation` flow — only reads
+     * the public key (for QR display), never the private one.
+     *
+     * Should only be called from a debug-only intent handler. The method
+     * itself is unconditionally compiled (Kotlin has no debug-only modifier),
+     * but the caller is gated on `BuildConfig.DEBUG`.
+     */
+    fun e2eWriteIdentityFilesForTest(publicKey: ByteArray) {
+        publicKeyFile().writeBytes(publicKey)
+        encryptedKeyFile().writeBytes(byteArrayOf(0))
+        ivFile().writeBytes(byteArrayOf(0))
+    }
+
     private fun deleteKeys() {
         encryptedKeyFile().delete()
         ivFile().delete()

@@ -29,14 +29,22 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import com.whoarewe.app.crypto.KeyManager
 import com.whoarewe.app.crypto.QrCodeUtils
 import com.whoarewe.app.crypto.QrDecoder
+import com.whoarewe.app.data.AppDatabase
+import com.whoarewe.app.data.Identity
 import com.whoarewe.app.ui.screens.ContactListScreen
 import com.whoarewe.app.ui.screens.PairWizardScreen
 import com.whoarewe.app.ui.screens.SetupScreen
 import com.whoarewe.app.ui.theme.WhoAreWeTheme
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
+import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
+import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
+import java.security.SecureRandom
 
 class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
@@ -46,23 +54,41 @@ class MainActivity : FragmentActivity() {
     }
 
     /**
-     * Debug-only test seam used by `scripts/e2e-pairing.sh`. Three extras are recognised:
-     *   --ez e2e_dump_qr true       → log this device's QR payload to logcat tag "WhoAreWe-E2E"
-     *   --es e2e_inject_qr <s>      → feed the string into the normal onQrScanned() pipeline,
-     *                                 skipping the photo picker / camera scanner UI.
-     *   --ez e2e_dump_secrets true  → log every stored TOTP shared secret as
-     *                                 "SECRET_DUMP: <hex>=<displayName>". The hex is
-     *                                 a fixed [0-9a-f]+ alphabet so it cannot contain
-     *                                 the `=` delimiter, which makes the format safe
-     *                                 even when display names contain `=`. The e2e
-     *                                 test compares the hex directly across devices,
-     *                                 which asserts the cryptographic invariant
-     *                                 without dragging the displayed code through
-     *                                 wall-clock TOTP window timing.
+     * Debug-only test seam used by `scripts/e2e-pairing.sh` and the Maestro
+     * flows. Four extras are recognised:
+     *   --ez e2e_dump_qr true            → log this device's QR payload to logcat tag "WhoAreWe-E2E"
+     *   --es e2e_inject_qr <s>           → feed the string into the normal onQrScanned() pipeline,
+     *                                      skipping the photo picker / camera scanner UI.
+     *   --ez e2e_dump_secrets true       → log every stored TOTP shared secret as
+     *                                      "SECRET_DUMP: <hex>=<displayName>". The hex is
+     *                                      a fixed [0-9a-f]+ alphabet so it cannot contain
+     *                                      the `=` delimiter, which makes the format safe
+     *                                      even when display names contain `=`. The e2e
+     *                                      test compares the hex directly across devices,
+     *                                      which asserts the cryptographic invariant
+     *                                      without dragging the displayed code through
+     *                                      wall-clock TOTP window timing.
+     *   --es e2e_create_identity <name>  → bootstrap an identity for the given display
+     *                                      name without ever invoking BiometricPrompt.
+     *                                      Used by the Maestro pair-wizard flow, which
+     *                                      cannot drive the system credential bouncer.
+     *                                      See cwage/whoarewe#11. Runs synchronously
+     *                                      (runBlocking) so the vm sees the bootstrapped
+     *                                      identity in its own init, no race.
      * Bypassed entirely on release builds.
      */
     private fun handleE2eIntent(intent: Intent?) {
         if (!BuildConfig.DEBUG || intent == null) return
+
+        val createIdentityName = intent.getStringExtra("e2e_create_identity")
+        if (createIdentityName != null) {
+            intent.removeExtra("e2e_create_identity")
+            // Run synchronously so the vm picks up the bootstrapped state when
+            // its own init reads `dao.getIdentityOnce()` a moment later. The
+            // alternative — lifecycleScope.launch — races the vm constructor
+            // and is non-deterministic.
+            runBlocking { bootstrapIdentityForE2e(createIdentityName) }
+        }
 
         val inject = intent.getStringExtra("e2e_inject_qr")
         if (inject != null) {
@@ -101,6 +127,48 @@ class MainActivity : FragmentActivity() {
                 }
             }
         }
+    }
+
+    /**
+     * Bootstrap an identity for Maestro tests without going through the real
+     * `BiometricPrompt` + Keystore flow. Generates a real Ed25519 keypair via
+     * BouncyCastle, hands the public key to `KeyManager.e2eWriteIdentityFilesForTest`
+     * (which writes a sentinel encrypted-key blob alongside the real public key
+     * so `hasKey()` returns true), and inserts the Identity row into Room.
+     *
+     * The encrypted-key blob is *intentionally* unusable. The vm will transition
+     * straight into the contact list state because both `dao.getIdentityOnce()`
+     * and `keyManager.hasKey()` return non-null/true, but any code path that
+     * tries to actually decrypt the private key will fail. Maestro tests that
+     * use this seam (currently just `pair-wizard-navigation.yaml`) only ever
+     * read the public key, so they're fine.
+     *
+     * Refuses to overwrite an existing identity, so an accidental invocation
+     * on a real installation can't brick the user's keys.
+     */
+    private suspend fun bootstrapIdentityForE2e(displayName: String) {
+        val keyManager = KeyManager(applicationContext)
+        val dao = AppDatabase.getInstance(applicationContext).contactDao()
+
+        if (keyManager.hasKey() || dao.getIdentityOnce() != null) {
+            Log.w("WhoAreWe-E2E", "e2e_create_identity refused: identity already exists")
+            return
+        }
+
+        val generator = Ed25519KeyPairGenerator()
+        generator.init(Ed25519KeyGenerationParameters(SecureRandom()))
+        val keyPair = generator.generateKeyPair()
+        val publicKey = (keyPair.public as Ed25519PublicKeyParameters).encoded
+
+        keyManager.e2eWriteIdentityFilesForTest(publicKey)
+
+        val identity = Identity(
+            displayName = displayName,
+            publicKey = publicKey.joinToString("") { "%02x".format(it) }
+        )
+        dao.saveIdentity(identity)
+
+        Log.i("WhoAreWe-E2E", "Bootstrapped identity for '$displayName'")
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

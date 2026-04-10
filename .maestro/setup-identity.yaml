@@ -5,6 +5,18 @@ tags:
   - setup
 ---
 
+# Verifies the Setup screen UI on a fresh install — title, copy, button
+# enable/disable logic, and display name input. Stops short of tapping
+# "Create Identity" because the post-tap path is the system credential
+# bouncer (com.android.systemui), which Maestro cannot drive: there is
+# no `inputText` / `pressKey` route into the bouncer's PIN field.
+#
+# The actual "tap Create Identity → biometric prompt → enter PIN →
+# identity row written → contact list visible" path is exercised by the
+# adb-driven e2e job in .github/workflows/e2e.yml, which uses the
+# uiautomator dump + `input keyevent` keycode mapping to drive the
+# bouncer end-to-end on a real two-emulator setup.
+
 # Fresh install should show setup screen
 - assertVisible: "WhoAreWe"
 - assertVisible: "Create your identity to get started"
@@ -17,23 +29,6 @@ tags:
 - tapOn: "Your name"
 - inputText: "TestUser"
 
-# Button should now be enabled
+# Button should now be enabled. This is the last assertion — see comment
+# at top for why we stop here instead of tapping through to the prompt.
 - assertEnabled: "Create Identity"
-
-# Create identity (this triggers biometric prompt)
-- tapOn: "Create Identity"
-
-# Biometric prompt appears - simulate with device credential
-# Maestro can handle this via `maestro mock biometric`
-# For CI, we use the --biometric flag
-- runFlow:
-    when:
-      visible: "WhoAreWe"  # biometric prompt title
-    commands:
-      # On emulator, PIN entry is shown. Maestro will auto-handle if configured.
-      - wait: 2000
-
-# After identity creation, we should see the main contact list
-- assertVisible: "No trusted contacts yet"
-- assertVisible: "Your Identity"
-- assertVisible: "TestUser"
