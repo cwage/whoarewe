@@ -54,6 +54,8 @@ KVM-in-Docker on macOS / Windows hosts (Docker Desktop) is not reliably supporte
 
 **Smoke that the loop has CI parity.** Run a known-good flow with the loop and confirm `Maestro flow(s) passed.`. Run a known-broken flow (e.g. one with an invalid command) and confirm the error matches what GHA's `maestro-tests` job would produce. The same image that runs locally is the one we'd use as a local mirror of the CI job, modulo Ubuntu version drift.
 
+**CI uses BuildKit layer caching.** The `maestro-tests` job builds the `androidtest` image via `docker/build-push-action@v6` with `cache-from: type=gha` / `cache-to: type=gha,mode=max`, so on a cache hit the ~700 MB API 28 system image install + maestro CLI download don't get re-fetched (cwage/whoarewe#16). Expected timing: cold builds take ~5 minutes; cache-hit builds drop to under 30 seconds. The cache invalidates whenever the `Dockerfile` (or any file it `COPY`s in) changes, so a Dockerfile-touching PR pays the cold-build cost on its first run and benefits from the warm cache on every subsequent run.
+
 ## End-to-end pairing — `./scripts/run-local-e2e.sh`
 
 Two-emulator driver that boots both devices, creates identities on each through the real UI and real biometric/PIN entry, then performs a bidirectional pairing and asserts both devices compute the same six-digit TOTP code.

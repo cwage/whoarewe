@@ -91,8 +91,33 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Build androidtest docker image
-        run: docker compose build androidtest
+      # Build via `docker buildx build` rather than `docker compose build` so
+      # we can plug in the GitHub Actions cache backend (`type=gha`). BuildKit
+      # hashes each layer's command + parent + COPY inputs and stores layer
+      # blobs in the same backing store as `actions/cache` (10 GB per repo,
+      # auto-scoped per branch with fallback to main). The expensive layers
+      # in the `androidtest` stage — the ~700 MB API 28 system image install,
+      # the maestro CLI download, the apt-get install of native libs — are
+      # single RUN steps, so they cache as long as the Dockerfile lines that
+      # produce them don't change. cwage/whoarewe#16.
+      #
+      # The `--load` flag pulls the built image into the local docker daemon
+      # under the `whoarewe-androidtest` tag, which is the explicit `image:`
+      # name set on the compose `androidtest` service. That hand-off is what
+      # lets the next step's `docker compose run --rm androidtest ...` find
+      # the image without compose itself rebuilding it.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build androidtest docker image (with GHA layer cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: androidtest
+          tags: whoarewe-androidtest
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Run maestro flows in container
         # HOST_UID / HOST_GID match the runner so the container user can

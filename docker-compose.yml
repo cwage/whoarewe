@@ -40,6 +40,11 @@ services:
     build:
       context: .
       target: androidtest
+    # Explicit image tag so `docker compose run androidtest` finds the image
+    # regardless of project directory name, and so the CI workflow's separate
+    # `docker buildx build -t whoarewe-androidtest` (used to get GHA layer
+    # caching, cwage/whoarewe#16) hands off cleanly to compose run.
+    image: whoarewe-androidtest
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     devices:
       - "/dev/kvm:/dev/kvm"
