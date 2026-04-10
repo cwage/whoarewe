@@ -104,6 +104,13 @@ nohup emulator \
 EMULATOR_PID=$!
 
 cleanup() {
+    # Copy maestro results out of the container's HOME (which is /tmp/home,
+    # not visible to the host) into the bind-mounted project dir, so the
+    # host or CI can pick them up as artifacts. Always runs, even on failure.
+    if [[ -d "${HOME}/.maestro/tests" ]]; then
+        rm -rf .maestro-results
+        cp -a "${HOME}/.maestro/tests" .maestro-results || true
+    fi
     log "Shutting down emulator (pid ${EMULATOR_PID})"
     adb -s "emulator-${EMULATOR_PORT}" emu kill >/dev/null 2>&1 || true
     kill "${EMULATOR_PID}" 2>/dev/null || true
