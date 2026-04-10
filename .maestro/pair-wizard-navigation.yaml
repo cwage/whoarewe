@@ -18,9 +18,12 @@ tags:
 - launchApp:
     clearState: false
 
-# From the contact list, tap the pair button
-- tapOn:
-    id: "Pair with someone"
+# From the contact list, tap the pair button. Maestro's `id:` selector
+# matches accessibility resource-id, which Compose icons don't have —
+# `"Pair with someone"` is the `contentDescription` of the IconButton's
+# Icon, exposed in the accessibility tree as content-desc, not id. Use
+# the short-form `tapOn` which matches text OR content-description.
+- tapOn: "Pair with someone"
 
 # Should see the wizard choose step
 - assertVisible: "Both of you need to scan each other's code. Who goes first?"
@@ -39,6 +42,7 @@ tags:
 - assertVisible: "Scan with camera"
 - assertVisible: "Import from image"
 
-# Go back to contacts
-- tapOn:
-    id: "Back"
+# Go back to contacts. Same content-description-not-id reasoning as
+# the "Pair with someone" tap above — `"Back"` is the contentDescription
+# on the wizard's `Icons.AutoMirrored.Filled.ArrowBack` navigation icon.
+- tapOn: "Back"
