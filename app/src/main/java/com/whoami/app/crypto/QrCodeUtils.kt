@@ -2,7 +2,6 @@ package com.whoami.app.crypto
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.util.Base64
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
@@ -27,7 +26,7 @@ object QrCodeUtils {
     }
 
     fun encode(displayName: String, publicKey: ByteArray): String {
-        val keyBase64 = Base64.encodeToString(publicKey, Base64.URL_SAFE or Base64.NO_WRAP)
+        val keyBase64 = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(publicKey)
         return "$SCHEME:$VERSION:$keyBase64:$displayName"
     }
 
@@ -38,7 +37,7 @@ object QrCodeUtils {
         if (parts[1] != VERSION) return null
 
         val publicKey = try {
-            Base64.decode(parts[2], Base64.URL_SAFE or Base64.NO_WRAP)
+            java.util.Base64.getUrlDecoder().decode(parts[2])
         } catch (e: IllegalArgumentException) {
             return null
         }
