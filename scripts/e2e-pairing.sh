@@ -2,7 +2,8 @@
 #
 # End-to-end pairing test driver. Drives two Android devices/emulators through
 # the full WhoAreWe pairing flow via adb + uiautomator + the debug-only intent
-# seam in MainActivity.handleE2eIntent (e2e_dump_qr / e2e_inject_qr).
+# seam in MainActivity.handleE2eIntent (e2e_dump_qr / e2e_inject_qr /
+# e2e_dump_secrets).
 #
 # Steps:
 #   1. Wait for both devices to boot
@@ -10,7 +11,14 @@
 #   3. Drive Setup screen → enter name → "Create Identity" → enter PIN
 #   4. Dump each device's QR payload via the debug intent (read from logcat)
 #   5. Inject the opposing QR into each device → biometric → enter PIN
-#   6. Read each contact's TOTP code from the contact list and assert they match
+#   6. Dump each device's stored TOTP shared secret via the debug intent and
+#      assert the two secrets are byte-for-byte identical. This is the actual
+#      product invariant — both phones independently derived the same secret
+#      via X25519 ECDH. Comparing displayed TOTP codes instead would race the
+#      wall-clock window boundary (see cwage/whoarewe#8).
+#   7. As a smoke check, also read the displayed TOTP code from each device's
+#      contact list. The codes are NOT asserted equal (they may differ across
+#      a window boundary even with identical secrets) but they are logged.
 #
 # Usage:
 #   scripts/e2e-pairing.sh [device-a-serial] [device-b-serial]
@@ -303,6 +311,34 @@ inject_qr() {
     adb -s "$s" shell am start -n "$ACT" --es e2e_inject_qr "$qr" -f 0x30000000 >/dev/null
 }
 
+# Dump every stored TOTP shared secret on a device. Returns lines of the form
+# "<displayName>=<hex>" — typically just one line in the e2e flow since each
+# device has exactly one paired contact.
+dump_secrets() {
+    local s=$1 i=0
+    adb -s "$s" logcat -c >/dev/null 2>&1 || true
+    adb -s "$s" shell am start -n "$ACT" --ez e2e_dump_secrets true -f 0x30000000 >/dev/null
+    while [[ $i -lt 20 ]]; do
+        local lines
+        lines=$(adb -s "$s" logcat -d -s "$LOG_TAG":I 2>/dev/null \
+            | grep -F 'SECRET_DUMP:' || true)
+        if [[ -n "$lines" ]]; then
+            echo "$lines" | sed 's/.*SECRET_DUMP: //'
+            return 0
+        fi
+        sleep 0.5
+        i=$((i+1))
+    done
+    echo "ERROR: $s never logged SECRET_DUMP" >&2
+    return 1
+}
+
+# Look up a single contact's secret hex from a device's stored contacts.
+secret_for() {
+    local s=$1 contact=$2
+    dump_secrets "$s" | awk -F= -v c="$contact" '$1==c {print $2; exit}'
+}
+
 # ── verification ─────────────────────────────────────────────────────────────
 
 read_totp_for() {
@@ -365,20 +401,38 @@ wait_for_text "$DEVICE_B" "Done" 30
 tap_text "$DEVICE_B" "Done"
 wait_for_text "$DEVICE_B" "Your Identity" 15
 
+# The actual product invariant: both devices independently derived the same
+# 20-byte shared secret via X25519 ECDH. We assert on the secret bytes — not
+# on the displayed TOTP code — because the displayed code races a wall-clock
+# window boundary that has nothing to do with the cryptography. See
+# cwage/whoarewe#8.
+SECRET_A=$(secret_for "$DEVICE_A" "$NAME_B")
+SECRET_B=$(secret_for "$DEVICE_B" "$NAME_A")
+
+echo "[e2e] $NAME_A's secret for $NAME_B: '${SECRET_A:-(none)}'"
+echo "[e2e] $NAME_B's secret for $NAME_A: '${SECRET_B:-(none)}'"
+
+if [[ -z "$SECRET_A" || -z "$SECRET_B" ]]; then
+    echo "FAIL: could not read shared secret from one or both devices" >&2
+    exit 1
+fi
+
+if [[ "$SECRET_A" != "$SECRET_B" ]]; then
+    echo "FAIL: shared secrets do not match" >&2
+    echo "       $NAME_A's secret: $SECRET_A" >&2
+    echo "       $NAME_B's secret: $SECRET_B" >&2
+    exit 1
+fi
+
+# Smoke check only — log the displayed codes but don't fail on disagreement.
+# A mismatch here can mean a TOTP window boundary was crossed between reads
+# and is not, by itself, evidence of a crypto bug.
 CODE_A=$(read_totp_for "$DEVICE_A" "$NAME_B")
 CODE_B=$(read_totp_for "$DEVICE_B" "$NAME_A")
-
 echo "[e2e] $NAME_A sees $NAME_B: '${CODE_A:-(none)}'"
 echo "[e2e] $NAME_B sees $NAME_A: '${CODE_B:-(none)}'"
-
-if [[ -z "$CODE_A" || -z "$CODE_B" ]]; then
-    echo "FAIL: could not read TOTP code from one or both devices" >&2
-    exit 1
+if [[ -n "$CODE_A" && -n "$CODE_B" && "$CODE_A" != "$CODE_B" ]]; then
+    echo "[e2e] note: displayed codes differ — likely a window boundary, secrets agree" >&2
 fi
 
-if [[ "$CODE_A" != "$CODE_B" ]]; then
-    echo "FAIL: codes do not match ($CODE_A != $CODE_B)" >&2
-    exit 1
-fi
-
-echo "PASS: matching TOTP code on both devices: $CODE_A"
+echo "PASS: shared secrets match on both devices: $SECRET_A"

@@ -30,6 +30,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.whoarewe.app.crypto.QrCodeUtils
 import com.whoarewe.app.crypto.QrDecoder
+import com.whoarewe.app.data.AppDatabase
 import com.whoarewe.app.ui.screens.ContactListScreen
 import com.whoarewe.app.ui.screens.PairWizardScreen
 import com.whoarewe.app.ui.screens.SetupScreen
@@ -45,10 +46,16 @@ class MainActivity : FragmentActivity() {
     }
 
     /**
-     * Debug-only test seam used by `scripts/e2e-pairing.sh`. Two extras are recognised:
-     *   --ez e2e_dump_qr true   → log this device's QR payload to logcat tag "WhoAreWe-E2E"
-     *   --es e2e_inject_qr <s>  → feed the string into the normal onQrScanned() pipeline,
-     *                             skipping the photo picker / camera scanner UI.
+     * Debug-only test seam used by `scripts/e2e-pairing.sh`. Three extras are recognised:
+     *   --ez e2e_dump_qr true       → log this device's QR payload to logcat tag "WhoAreWe-E2E"
+     *   --es e2e_inject_qr <s>      → feed the string into the normal onQrScanned() pipeline,
+     *                                 skipping the photo picker / camera scanner UI.
+     *   --ez e2e_dump_secrets true  → log every stored TOTP shared secret as
+     *                                 "SECRET_DUMP: <displayName>=<hex>". The e2e test
+     *                                 compares these directly across devices, which
+     *                                 asserts the cryptographic invariant without
+     *                                 dragging the displayed code through wall-clock
+     *                                 TOTP window timing.
      * Bypassed entirely on release builds.
      */
     private fun handleE2eIntent(intent: Intent?) {
@@ -73,6 +80,21 @@ class MainActivity : FragmentActivity() {
                 } else {
                     val qr = QrCodeUtils.encode(state.identity.displayName, pubKey)
                     Log.i("WhoAreWe-E2E", "QR_DUMP: $qr")
+                }
+            }
+        }
+
+        if (intent.getBooleanExtra("e2e_dump_secrets", false)) {
+            intent.removeExtra("e2e_dump_secrets")
+            val dao = AppDatabase.getInstance(applicationContext).contactDao()
+            lifecycleScope.launch {
+                val contacts = dao.getAllContacts().first()
+                if (contacts.isEmpty()) {
+                    Log.i("WhoAreWe-E2E", "SECRET_DUMP_FAIL: no contacts")
+                } else {
+                    for (c in contacts) {
+                        Log.i("WhoAreWe-E2E", "SECRET_DUMP: ${c.displayName}=${c.totpSecret}")
+                    }
                 }
             }
         }
