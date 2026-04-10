@@ -28,6 +28,8 @@ Requires JDK 21 and the Android SDK. `minSdk` 28, `targetSdk` 35.
 
 The e2e harness drives two real emulators through identity creation, biometric unlock, and bidirectional pairing, then asserts both devices compute the same six-digit code. Its design, the debug intent seam it uses, and the deliberately known gaps are all documented in [`docs/testing.md`](docs/testing.md).
 
+For trying the app out by hand — installing on your own phone, pairing with an emulator, simulating a fingerprint from adb — see [`docs/manual-testing.md`](docs/manual-testing.md).
+
 ## CI
 
 Three workflows run on every PR to `main`:

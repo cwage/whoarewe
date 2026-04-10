@@ -1,6 +1,6 @@
 # Testing
 
-Four layers, each covering different concerns.
+Four layers, each covering different concerns. For trying the app out by hand on a real phone, see [`manual-testing.md`](manual-testing.md).
 
 ## Unit tests — `./gradlew :app:testDebugUnitTest`
 
