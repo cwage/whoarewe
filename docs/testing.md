@@ -29,6 +29,21 @@ Surface-level YAML flows that click through the app UI:
 
 Fast smoke tests to catch broken navigation. They do not verify crypto correctness and currently swallow failures (`maestro test … || true`) so they do not block CI on flakiness.
 
+### Running maestro flows locally (dockerized)
+
+The `androidtest` service in `docker-compose.yml` boots a real headless API 28 emulator inside a container, installs the freshly-built debug APK, and runs whatever maestro flow you point it at. Backed by the same `Dockerfile` as the slim `build` service via a multi-stage `target: androidtest` that adds the emulator binary, the API 28 system image, and the maestro CLI. Used via `scripts/local-maestro.sh`:
+
+```
+docker compose run --rm androidtest scripts/local-maestro.sh
+docker compose run --rm androidtest scripts/local-maestro.sh .maestro/setup-identity.yaml
+```
+
+End-to-end iteration is roughly **30 seconds** per cycle once the AVD has been bootstrapped (8s emulator boot, ~5s install + maestro start, ~10s for a typical flow). The AVD lives in a named docker volume (`android-avd`) so it persists across `docker compose run --rm` invocations and only gets created on the very first run. Same for the gradle cache (`gradle-cache` volume).
+
+**Linux host only.** The emulator needs hardware virtualization to be remotely usable — software TCG fallback boots in 5+ minutes which defeats the iteration loop's whole point. The compose service exposes `/dev/kvm` via `devices:` and joins the host's `kvm` group via `group_add: ["109"]`. KVM-in-Docker on macOS / Windows hosts (Docker Desktop) is not reliably supported, so on those hosts use a regular host-side AVD instead.
+
+**Smoke that the loop has CI parity.** Run a known-good flow with the loop and confirm `Maestro flow(s) passed.`. Run a known-broken flow (e.g. one with an invalid command) and confirm the error matches what GHA's `maestro-tests` job would produce. The same image that runs locally is the one we'd use as a local mirror of the CI job, modulo Ubuntu version drift.
+
 ## End-to-end pairing — `./scripts/run-local-e2e.sh`
 
 Two-emulator driver that boots both devices, creates identities on each through the real UI and real biometric/PIN entry, then performs a bidirectional pairing and asserts both devices compute the same six-digit TOTP code.

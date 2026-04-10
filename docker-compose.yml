@@ -1,6 +1,8 @@
 services:
   build:
-    build: .
+    build:
+      context: .
+      target: build
     user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - .:/project
@@ -8,5 +10,36 @@ services:
     working_dir: /project
     command: ["sleep", "infinity"]
 
+  # Heavyweight image used by `scripts/local-maestro.sh` (cwage/whoarewe#13).
+  # Includes the Android emulator, the API 28 system image, and the maestro
+  # CLI on top of the slim `build` stage.
+  #
+  # Requires `/dev/kvm` on the host (Linux only — KVM in Docker Desktop on
+  # macOS / Windows is not reliably supported). On a Linux host with a
+  # working /dev/kvm, the emulator boots in ~20s; without KVM it falls back
+  # to software TCG and takes 5+ minutes per boot, which defeats the entire
+  # point of having a local iteration loop.
+  androidtest:
+    build:
+      context: .
+      target: androidtest
+    user: "${UID:-1000}:${GID:-1000}"
+    devices:
+      - "/dev/kvm:/dev/kvm"
+    # GID 109 is the `kvm` group on the host. Adding it to the container
+    # user's supplementary groups grants /dev/kvm access via the device's
+    # group permissions, which works whether or not POSIX ACLs survive the
+    # devices: passthrough.
+    group_add:
+      - "109"
+    volumes:
+      - .:/project
+      - gradle-cache:/gradle-cache
+      - android-avd:/data/avd
+    working_dir: /project
+    # No default command — invoked via `docker compose run --rm androidtest
+    # scripts/local-maestro.sh ...` from the host.
+
 volumes:
   gradle-cache:
+  android-avd:
