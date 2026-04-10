@@ -12,6 +12,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
+    strategy:
+      fail-fast: false
+      matrix:
+        # Matrix the e2e across the legacy/modern Keystore-auth boundary:
+        # API 28 exercises the `setUserAuthenticationValidityDurationSeconds`
+        # path (cipher init has to happen *after* BiometricPrompt refreshes
+        # the auth window), API 33 exercises the `setUserAuthenticationParameters`
+        # path (cipher init happens up front and the prompt unlocks via
+        # CryptoObject). Both must stay green; cwage/whoarewe#6 was the bug
+        # where the legacy path was broken end-to-end.
+        api-level: [28, 33]
+
     steps:
       - uses: actions/checkout@v4
 
@@ -43,11 +55,7 @@ jobs:
       - name: Run pairing E2E on two emulators
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          # API 33+ is required: KeyManager uses setUserAuthenticationParameters()
-          # on API 30+ so CryptoObject correctly unlocks the time-bound keystore
-          # key. API 28 uses the legacy setUserAuthenticationValidityDurationSeconds
-          # path which fails cipher.init() before BiometricPrompt ever shows.
-          api-level: 33
+          api-level: ${{ matrix.api-level }}
           arch: x86_64
           target: default
           profile: pixel_6
@@ -61,7 +69,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-pairing-artifacts
+          name: e2e-pairing-artifacts-api${{ matrix.api-level }}
           path: |
             /tmp/e2e-fail-*.png
             /tmp/emulator-5556.log
