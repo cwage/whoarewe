@@ -110,7 +110,10 @@ jobs:
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
+            # NOTE: android-emulator-runner runs this via `/bin/sh -c`, which
+            # is dash on Ubuntu — no `pipefail`. The script has no pipes so
+            # this is fine; just don't add `-o pipefail` here.
             # Set up device PIN for biometric tests
             adb shell locksettings set-pin 1234
             # Install the APK
