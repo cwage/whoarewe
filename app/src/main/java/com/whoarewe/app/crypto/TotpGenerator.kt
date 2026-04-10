@@ -4,26 +4,50 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
 object TotpGenerator {
-    const val PERIOD_SECONDS = 60L
+    /**
+     * Default rotation period in seconds, app-wide.
+     *
+     * This is the **single tunable** for how often the displayed code rotates.
+     * The display tick loop, the contact list progress ring, the e2e tests, and
+     * any future verifier all derive from this value — nothing else hard-codes
+     * a step size.
+     *
+     * Currently 5 minutes (300s). The rationale and trade-off are documented in
+     * `docs/pairing.md`. Short version: with a 60s period the wall-clock window
+     * boundary races the display refresh, and two phones can briefly disagree
+     * on which code is current — which is exactly the failure mode the product
+     * is supposed to make impossible. 300s gives ample slack for any plausible
+     * inter-device clock skew while still rotating often enough that a captured
+     * code is useless within the same conversation.
+     */
+    const val PERIOD_SECONDS = 300L
     private const val DIGITS = 6
 
-    fun generateCode(secret: ByteArray, timeMillis: Long = System.currentTimeMillis()): String {
-        val counter = timeMillis / 1000 / PERIOD_SECONDS
+    fun generateCode(
+        secret: ByteArray,
+        timeMillis: Long = System.currentTimeMillis(),
+        periodSeconds: Long = PERIOD_SECONDS
+    ): String {
+        val counter = timeMillis / 1000 / periodSeconds
         return generateHotp(secret, counter)
     }
 
-    fun secondsRemaining(timeMillis: Long = System.currentTimeMillis()): Int {
-        val elapsed = (timeMillis / 1000) % PERIOD_SECONDS
-        return (PERIOD_SECONDS - elapsed).toInt()
+    fun secondsRemaining(
+        timeMillis: Long = System.currentTimeMillis(),
+        periodSeconds: Long = PERIOD_SECONDS
+    ): Int {
+        val elapsed = (timeMillis / 1000) % periodSeconds
+        return (periodSeconds - elapsed).toInt()
     }
 
     fun verifyCode(
         secret: ByteArray,
         code: String,
         timeMillis: Long = System.currentTimeMillis(),
+        periodSeconds: Long = PERIOD_SECONDS,
         windowSize: Int = 1
     ): Boolean {
-        val counter = timeMillis / 1000 / PERIOD_SECONDS
+        val counter = timeMillis / 1000 / periodSeconds
         for (i in -windowSize..windowSize) {
             if (generateHotp(secret, counter + i) == code) return true
         }

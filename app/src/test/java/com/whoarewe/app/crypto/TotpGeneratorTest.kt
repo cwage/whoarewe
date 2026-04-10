@@ -8,11 +8,13 @@ import org.junit.Test
 class TotpGeneratorTest {
 
     // RFC 6238 Appendix B test vectors (SHA1, 8-digit)
-    // We use 6-digit and 60-second periods, so we test our own implementation
-    // with known inputs and verify properties.
+    // We use 6-digit codes; the rotation period is configured in TotpGenerator
+    // and referenced via PERIOD_SECONDS so this file has no hardcoded step size.
 
     // Shared secret from RFC 4226 test vectors
     private val rfcSecret = "12345678901234567890".toByteArray()
+
+    private val periodMillis = TotpGenerator.PERIOD_SECONDS * 1000
 
     @Test
     fun `generates 6-digit codes`() {
@@ -25,7 +27,7 @@ class TotpGeneratorTest {
     fun `pads codes shorter than 6 digits with leading zeros`() {
         // Generate many codes and verify all are 6 digits
         for (t in 0L..100L) {
-            val code = TotpGenerator.generateCode(rfcSecret, t * 60_000)
+            val code = TotpGenerator.generateCode(rfcSecret, t * periodMillis)
             assertEquals("Code at t=$t should be 6 digits", 6, code.length)
         }
     }
@@ -40,17 +42,11 @@ class TotpGeneratorTest {
 
     @Test
     fun `same secret different time period produces different code`() {
-        // Two times in different 60-second windows
-        val time1 = 60_000L  // second 60
-        val time2 = 120_000L // second 120
-        val code1 = TotpGenerator.generateCode(rfcSecret, time1)
-        val code2 = TotpGenerator.generateCode(rfcSecret, time2)
-        // Not guaranteed to be different but overwhelmingly likely
-        // with a million possible codes. Test a range to be sure.
+        // Walk consecutive windows; at least one pair must differ.
         var allSame = true
         for (i in 0L..9L) {
-            val a = TotpGenerator.generateCode(rfcSecret, i * 60_000)
-            val b = TotpGenerator.generateCode(rfcSecret, (i + 1) * 60_000)
+            val a = TotpGenerator.generateCode(rfcSecret, i * periodMillis)
+            val b = TotpGenerator.generateCode(rfcSecret, (i + 1) * periodMillis)
             if (a != b) allSame = false
         }
         assertFalse("All consecutive codes were identical — something is wrong", allSame)
@@ -58,11 +54,11 @@ class TotpGeneratorTest {
 
     @Test
     fun `same time window produces same code regardless of position within window`() {
-        // Both times are within the same 60-second window
-        val time1 = 60_000L  // second 60, window 1
-        val time2 = 90_000L  // second 90, still window 1
-        val code1 = TotpGenerator.generateCode(rfcSecret, time1)
-        val code2 = TotpGenerator.generateCode(rfcSecret, time2)
+        // Two times within the same window: window-start and window-start + half-period.
+        val windowStart = periodMillis
+        val midWindow = windowStart + (periodMillis / 2)
+        val code1 = TotpGenerator.generateCode(rfcSecret, windowStart)
+        val code2 = TotpGenerator.generateCode(rfcSecret, midWindow)
         assertEquals(code1, code2)
     }
 
@@ -82,9 +78,14 @@ class TotpGeneratorTest {
 
     @Test
     fun `secondsRemaining returns value between 1 and period`() {
-        for (t in 0L..119L) {
-            val remaining = TotpGenerator.secondsRemaining(t * 1000)
-            assertTrue("remaining=$remaining at t=$t", remaining in 1..TotpGenerator.PERIOD_SECONDS.toInt())
+        // Walk two full periods at one-second resolution.
+        val limit = (TotpGenerator.PERIOD_SECONDS * 2).toInt()
+        for (t in 0..limit) {
+            val remaining = TotpGenerator.secondsRemaining(t.toLong() * 1000)
+            assertTrue(
+                "remaining=$remaining at t=$t",
+                remaining in 1..TotpGenerator.PERIOD_SECONDS.toInt()
+            )
         }
     }
 
@@ -99,11 +100,11 @@ class TotpGeneratorTest {
     fun `verifyCode accepts adjacent windows with windowSize 1`() {
         val time = 1000000000L * 1000
         // Code from previous window
-        val prevCode = TotpGenerator.generateCode(rfcSecret, time - 60_000)
+        val prevCode = TotpGenerator.generateCode(rfcSecret, time - periodMillis)
         assertTrue(TotpGenerator.verifyCode(rfcSecret, prevCode, time, windowSize = 1))
 
         // Code from next window
-        val nextCode = TotpGenerator.generateCode(rfcSecret, time + 60_000)
+        val nextCode = TotpGenerator.generateCode(rfcSecret, time + periodMillis)
         assertTrue(TotpGenerator.verifyCode(rfcSecret, nextCode, time, windowSize = 1))
     }
 
@@ -111,7 +112,7 @@ class TotpGeneratorTest {
     fun `verifyCode rejects code from distant window`() {
         val time = 1000000000L * 1000
         // Code from 3 windows away
-        val farCode = TotpGenerator.generateCode(rfcSecret, time + 180_000)
+        val farCode = TotpGenerator.generateCode(rfcSecret, time + (3 * periodMillis))
         assertFalse(TotpGenerator.verifyCode(rfcSecret, farCode, time, windowSize = 1))
     }
 

@@ -4,13 +4,13 @@ WhoAreWe's job is to let two humans who have met once in person prove to each ot
 
 ## The core idea
 
-Once Alice and Bob have paired, each of their phones displays a rotating six-digit code in the other's contact row. Both phones compute the same code at the same time. The codes change every 60 seconds.
+Once Alice and Bob have paired, each of their phones displays a rotating six-digit code in the other's contact row. Both phones compute the same code at the same time. The codes change every five minutes.
 
 When "Bob" later calls Alice from an unfamiliar number, or texts her from a new handle, or appears in her inbox as `robert.smith.backup@outlook.com`, she can ask:
 
 > What does your WhoAreWe code for me say right now?
 
-If the caller reads back a sequence that matches what Alice's phone currently shows for Bob, Alice knows she is talking to someone in physical possession of Bob's actual device — because only that device holds the secret required to compute that code, and the code rotates every minute so a stale shoulder-surf from a month ago cannot fake it.
+If the caller reads back a sequence that matches what Alice's phone currently shows for Bob, Alice knows she is talking to someone in physical possession of Bob's actual device — because only that device holds the secret required to compute that code, and the code rotates often enough that a stale shoulder-surf from days ago cannot fake it.
 
 ## How the pairing works
 
@@ -47,9 +47,23 @@ This is also why the end-to-end test (see [`testing.md`](testing.md)) can read e
 
 ## From shared secret to six-digit code
 
-The stored `shared_secret` is used as an HMAC-SHA1 key for a standard RFC 6238 TOTP generator with a 60-second step. At any given moment both phones HMAC the same timestamp with the same key and produce the same six digits. No clock sync protocol is needed — both phones rely on their own wall clocks being close to `now`, which they reliably are on any modern device.
+The stored `shared_secret` is used as an HMAC-SHA1 key for a standard RFC 6238 TOTP generator. At any given moment both phones HMAC the same timestamp with the same key and produce the same six digits. A different contact produces a different shared secret and therefore a different code; compromising one pair does not compromise any other.
 
-A different contact produces a different shared secret and therefore a different code. Compromising one pair does not compromise any other.
+### Why the rotation period is five minutes (and not sixty seconds)
+
+The TOTP step size is the single most important UX knob in the whole system, and the right value for it is not obvious.
+
+The shorter the step, the sooner a captured code becomes useless — but also the more often the wall-clock rolls over a window boundary while two phones are being compared by a human. Both phones display *their own* current code from *their own* local clock; there is no verifier, no submission, no asymmetry. If Bob's phone has just ticked over to the next window and Alice's phone hasn't yet, the two displayed codes legitimately disagree for a fraction of a second despite both being correct outputs of the same shared secret. With a 60-second step that boundary lands about every minute and the disagreement window is about 1-2% of every minute. The risk isn't theoretical — the e2e test in `scripts/e2e-pairing.sh` hit it on CI as cwage/whoarewe#8, where two devices agreed on the secret but displayed adjacent-window codes during a comparison taken two seconds after a minute mark.
+
+In a system that is supposed to detect impersonators by *non-matching* codes, briefly displaying non-matching codes due to clock skew is a false positive on the trust check — exactly the failure mode the whole product is meant to make impossible. The cryptography is fine; the comparison is what's racing.
+
+A five-minute (300-second) step shifts the disagreement probability from roughly one in fifty to roughly one in three hundred for any plausible inter-device clock skew, which on phones with auto-set time is well under a second. In exchange, a captured code is reusable for up to five minutes instead of up to one. Since there is no submit/verify channel an attacker could replay a captured code *into* — the code is purely a visual comparison artifact — the longer reuse window does not meaningfully change the threat model. The attacker who shoulder-surfed your code today still cannot impersonate Bob tomorrow.
+
+The constant lives at `TotpGenerator.PERIOD_SECONDS` in `app/src/main/java/com/whoarewe/app/crypto/TotpGenerator.kt`. Everything in the app — display tick, progress ring, e2e tests, future verifier — derives from that one value. Tune it there.
+
+### Why the e2e test does not assert on displayed codes
+
+`scripts/e2e-pairing.sh` does not assert that two devices display the same six-digit code. It asserts that they store the same 20-byte shared secret (read via the debug-only `e2e_dump_secrets` intent in `MainActivity.handleE2eIntent`). Equal stored secrets *is* the cryptographic invariant the product depends on; equal displayed codes is a downstream consequence that races the wall clock. The test logs the displayed codes as a smoke check but only fails on the secret comparison.
 
 ## What this is not
 

@@ -51,7 +51,7 @@ sealed class UiState {
         val identity: Identity,
         val contacts: List<ContactWithCode> = emptyList(),
         val fingerprint: String = "",
-        val secondsRemaining: Int = 30,
+        val secondsRemaining: Int = TotpGenerator.PERIOD_SECONDS.toInt(),
         val pairStep: PairStep? = null,
         val error: String? = null
     ) : UiState()
