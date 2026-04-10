@@ -206,7 +206,7 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun BiometricGate(
     request: BiometricRequest?,
-    onSuccess: (javax.crypto.Cipher) -> Unit,
+    onSuccess: (javax.crypto.Cipher?) -> Unit,
     onError: (String) -> Unit,
     onCancelled: () -> Unit
 ) {
@@ -217,11 +217,23 @@ fun BiometricGate(
 
     DisposableEffect(request) {
         val executor = ContextCompat.getMainExecutor(activity)
+        // Modern path (API ≥ R): the cipher is already initialized and the
+        // prompt unlocks it via CryptoObject. Legacy path (API < R): the
+        // cipher is null on the request, the prompt runs without a CryptoObject,
+        // and the vm acquires the cipher in onBiometricSuccess once the
+        // device-credential window has been refreshed by the prompt. See
+        // KeyManager.usesLegacyAuth() / cwage/whoarewe#6.
+        val deferredCipher = request.cipher == null
         val prompt = BiometricPrompt(
             activity,
             executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    if (deferredCipher) {
+                        // Legacy path — let the vm acquire the cipher post-auth.
+                        onSuccess(null)
+                        return
+                    }
                     val cipher = result.cryptoObject?.cipher
                     if (cipher != null) {
                         onSuccess(cipher)
@@ -255,7 +267,11 @@ fun BiometricGate(
             )
             .build()
 
-        prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(request.cipher))
+        if (deferredCipher) {
+            prompt.authenticate(promptInfo)
+        } else {
+            prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(request.cipher!!))
+        }
 
         onDispose {
             prompt.cancelAuthentication()

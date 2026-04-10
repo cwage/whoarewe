@@ -28,8 +28,20 @@ sealed class BiometricPurpose {
     data class AddContact(val payload: QrCodeUtils.QrPayload) : BiometricPurpose()
 }
 
+/**
+ * A pending biometric authentication request.
+ *
+ * `cipher` is non-null on API ≥ R: the vm pre-initialized the keystore cipher
+ * and `BiometricPrompt` will unlock it via `CryptoObject` on success.
+ *
+ * `cipher` is null on API < R: the legacy `setUserAuthenticationValidityDurationSeconds`
+ * key model would have thrown `UserNotAuthenticatedException` at `cipher.init`
+ * *before* the prompt ever ran, so on legacy we defer the cipher acquisition to
+ * `onBiometricSuccess` — by then the prompt has refreshed the device-credential
+ * timer and `init` succeeds inside the validity window. See cwage/whoarewe#6.
+ */
 data class BiometricRequest(
-    val cipher: Cipher,
+    val cipher: Cipher?,
     val purpose: BiometricPurpose,
     val subtitle: String
 )
@@ -155,7 +167,10 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
         pendingDisplayName = state.displayName.trim()
 
         try {
-            val cipher = keyManager.getEncryptionCipher()
+            // On API ≥ R the cipher is acquired up front and unlocked by the
+            // prompt. On legacy we leave it null and acquire it post-auth in
+            // onBiometricSuccess. See KeyManager.usesLegacyAuth() for the why.
+            val cipher = if (keyManager.usesLegacyAuth()) null else keyManager.getEncryptionCipher()
             _biometricRequest.value = BiometricRequest(
                 cipher = cipher,
                 purpose = BiometricPurpose.Generate,
@@ -206,9 +221,10 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
             }
 
             Log.d("WhoAreWe", "onQrScanned: requesting biometric for ECDH")
-            // Need biometric to decrypt our private key for ECDH
+            // Need biometric to decrypt our private key for ECDH. On API ≥ R
+            // we init the cipher up front; on legacy we defer to post-auth.
             try {
-                val cipher = keyManager.getDecryptionCipher()
+                val cipher = if (keyManager.usesLegacyAuth()) null else keyManager.getDecryptionCipher()
                 _biometricRequest.value = BiometricRequest(
                     cipher = cipher,
                     purpose = BiometricPurpose.AddContact(payload),
@@ -224,16 +240,30 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun onBiometricSuccess(cipher: Cipher) {
+    fun onBiometricSuccess(cipher: Cipher?) {
         Log.d("WhoAreWe", "onBiometricSuccess")
         val request = _biometricRequest.value ?: return
         _biometricRequest.value = null
 
         viewModelScope.launch {
             try {
+                // Legacy path: cipher is null because we deferred init until
+                // after the prompt refreshed the auth window. Acquire it now,
+                // inside that window.
+                val activeCipher: Cipher = cipher ?: try {
+                    when (request.purpose) {
+                        is BiometricPurpose.Generate -> keyManager.getEncryptionCipher()
+                        is BiometricPurpose.AddContact -> keyManager.getDecryptionCipher()
+                    }
+                } catch (e: Exception) {
+                    Log.e("WhoAreWe", "Post-auth cipher init failed", e)
+                    onBiometricError(e.message ?: "Authentication succeeded but cipher init failed")
+                    return@launch
+                }
+
                 when (val purpose = request.purpose) {
                     is BiometricPurpose.Generate -> {
-                        val result = keyManager.generateKey(cipher)
+                        val result = keyManager.generateKey(activeCipher)
                         result.fold(
                             onSuccess = {
                                 val name = pendingDisplayName ?: "Me"
@@ -259,7 +289,7 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                     is BiometricPurpose.AddContact -> {
                         val payload = purpose.payload
                         withContext(Dispatchers.IO) {
-                            val ourPrivateKey = keyManager.decryptPrivateKey(cipher)
+                            val ourPrivateKey = keyManager.decryptPrivateKey(activeCipher)
                             try {
                                 val sharedSecret = EcdhExchange.deriveSharedSecret(
                                     ourPrivateKey,
