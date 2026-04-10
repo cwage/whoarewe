@@ -87,21 +87,32 @@ fi
 
 # ── boot emulator ───────────────────────────────────────────────────────────
 
-# Kill any stray emulator on the same port from a previous run.
+EMULATOR_SERIAL="emulator-${EMULATOR_PORT}"
+STARTED_EMULATOR=0
+EMULATOR_PID=""
+
+# Make sure adb is responsive, then reuse an existing emulator on this port
+# if one is already online instead of trying to launch a second instance and
+# unintentionally killing the first one in our cleanup trap.
 adb kill-server >/dev/null 2>&1 || true
 adb start-server >/dev/null 2>&1 || true
 
-log "Booting emulator @${AVD_NAME} on port ${EMULATOR_PORT}"
-nohup emulator \
-    -avd "${AVD_NAME}" \
-    -port "${EMULATOR_PORT}" \
-    -no-snapshot-save \
-    -no-window \
-    -gpu swiftshader_indirect \
-    -noaudio \
-    -no-boot-anim \
-    > /tmp/emulator.log 2>&1 &
-EMULATOR_PID=$!
+if adb devices | awk -v s="${EMULATOR_SERIAL}" '$1 == s && $2 == "device" { found = 1 } END { exit found ? 0 : 1 }'; then
+    log "Reusing existing emulator on ${EMULATOR_SERIAL}"
+else
+    log "Booting emulator @${AVD_NAME} on port ${EMULATOR_PORT}"
+    nohup emulator \
+        -avd "${AVD_NAME}" \
+        -port "${EMULATOR_PORT}" \
+        -no-snapshot-save \
+        -no-window \
+        -gpu swiftshader_indirect \
+        -noaudio \
+        -no-boot-anim \
+        > /tmp/emulator.log 2>&1 &
+    EMULATOR_PID=$!
+    STARTED_EMULATOR=1
+fi
 
 cleanup() {
     # Copy maestro results out of the container's HOME (which is /tmp/home,
@@ -111,19 +122,27 @@ cleanup() {
         rm -rf .maestro-results
         cp -a "${HOME}/.maestro/tests" .maestro-results || true
     fi
-    log "Shutting down emulator (pid ${EMULATOR_PID})"
-    adb -s "emulator-${EMULATOR_PORT}" emu kill >/dev/null 2>&1 || true
-    kill "${EMULATOR_PID}" 2>/dev/null || true
-    wait "${EMULATOR_PID}" 2>/dev/null || true
+    if [[ "${STARTED_EMULATOR}" -eq 1 ]]; then
+        log "Shutting down emulator (pid ${EMULATOR_PID})"
+        adb -s "${EMULATOR_SERIAL}" emu kill >/dev/null 2>&1 || true
+        kill "${EMULATOR_PID}" 2>/dev/null || true
+        wait "${EMULATOR_PID}" 2>/dev/null || true
+    else
+        log "Leaving existing emulator ${EMULATOR_SERIAL} running"
+    fi
 }
 trap cleanup EXIT
 
 # Wait for boot. wait-for-device returns as soon as adb sees the device,
 # but the device may still be booting userspace — poll sys.boot_completed.
-adb -s "emulator-${EMULATOR_PORT}" wait-for-device
+# `|| true` on the getprop call prevents `set -e` from killing this loop
+# during the brief window when adb is up but the device hasn't fully come
+# up yet (the same pattern scripts/run-local-e2e.sh uses).
+adb -s "${EMULATOR_SERIAL}" wait-for-device
 elapsed=0
+boot=""
 while [[ "${elapsed}" -lt "${EMULATOR_BOOT_TIMEOUT}" ]]; do
-    boot=$(adb -s "emulator-${EMULATOR_PORT}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')
+    boot=$(adb -s "${EMULATOR_SERIAL}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)
     if [[ "${boot}" == "1" ]]; then
         log "Emulator booted after ${elapsed}s"
         break
@@ -140,10 +159,10 @@ fi
 # ── device prep + APK install ───────────────────────────────────────────────
 
 log "Setting device PIN to ${PIN}"
-adb -s "emulator-${EMULATOR_PORT}" shell locksettings set-pin "${PIN}" >/dev/null
+adb -s "${EMULATOR_SERIAL}" shell locksettings set-pin "${PIN}" >/dev/null
 
 log "Installing ${APK_PATH}"
-adb -s "emulator-${EMULATOR_PORT}" install -r "${APK_PATH}" >/dev/null
+adb -s "${EMULATOR_SERIAL}" install -r "${APK_PATH}" >/dev/null
 
 # ── run maestro ─────────────────────────────────────────────────────────────
 

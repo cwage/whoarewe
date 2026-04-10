@@ -95,7 +95,16 @@ jobs:
         run: docker compose build androidtest
 
       - name: Run maestro flows in container
-        run: docker compose run --rm androidtest scripts/local-maestro.sh .maestro/setup-identity.yaml
+        # HOST_UID / HOST_GID match the runner so the container user can
+        # write into the bind-mounted project (notably the gradle build
+        # output and the .maestro-results dir). KVM_GID picks up the
+        # runner's `kvm` group GID — varies by distro / runner image,
+        # so we discover it dynamically rather than hardcoding.
+        run: |
+          export HOST_UID=$(id -u)
+          export HOST_GID=$(id -g)
+          export KVM_GID=$(getent group kvm | cut -d: -f3)
+          docker compose run --rm androidtest scripts/local-maestro.sh .maestro/setup-identity.yaml
 
       - name: Upload Maestro results
         if: always()

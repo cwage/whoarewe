@@ -1,9 +1,26 @@
+# NOTE on user / group config:
+#
+# `HOST_UID` / `HOST_GID` and `KVM_GID` should be set to match the host
+# running this compose file, e.g.:
+#
+#     export HOST_UID=$(id -u) HOST_GID=$(id -g) KVM_GID=$(getent group kvm | cut -d: -f3)
+#     docker compose run --rm androidtest scripts/local-maestro.sh ...
+#
+# We can't use `${UID:-1000}` here because `UID` is a bash readonly built-in
+# that isn't exported to subprocess environments — docker compose only sees
+# environment variables in os.environ, not bash specials, so `${UID:-1000}`
+# always falls back to 1000 even on hosts where the actual UID is different.
+# That cost a CI run on cwage/whoarewe#14 to discover.
+#
+# Defaults work on hosts where uid/gid 1000 owns the project directory and
+# the kvm group has GID 109 (typical Ubuntu desktop). Override otherwise.
+
 services:
   build:
     build:
       context: .
       target: build
-    user: "${UID:-1000}:${GID:-1000}"
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     volumes:
       - .:/project
       - gradle-cache:/gradle-cache
@@ -23,15 +40,17 @@ services:
     build:
       context: .
       target: androidtest
-    user: "${UID:-1000}:${GID:-1000}"
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     devices:
       - "/dev/kvm:/dev/kvm"
-    # GID 109 is the `kvm` group on the host. Adding it to the container
-    # user's supplementary groups grants /dev/kvm access via the device's
-    # group permissions, which works whether or not POSIX ACLs survive the
-    # devices: passthrough.
+    # KVM_GID is the host's `kvm` group GID — varies by distro. Adding it
+    # to the container user's supplementary groups grants /dev/kvm access
+    # via the device's group permissions. Defaults to 109 (Ubuntu desktop).
+    # On the GHA runner /dev/kvm is chmod 0666 via the workflow's "Enable
+    # KVM" step, so this is a redundant safety net there but matters for
+    # local hosts where /dev/kvm is mode 0660.
     group_add:
-      - "109"
+      - "${KVM_GID:-109}"
     volumes:
       - .:/project
       - gradle-cache:/gradle-cache
