@@ -37,7 +37,6 @@ APK_PATH="${APK_PATH:-app/build/outputs/apk/debug/app-debug.apk}"
 EMULATOR_PORT=5554
 EMULATOR_BOOT_TIMEOUT=180
 PIN="${PIN:-1234}"
-PKG="com.whoarewe.app"
 
 log() { printf '[local-maestro] %s\n' "$*"; }
 
@@ -51,7 +50,9 @@ if [[ ! -e /dev/kvm ]]; then
 fi
 if [[ ! -r /dev/kvm || ! -w /dev/kvm ]]; then
     echo "ERROR: /dev/kvm is not readable/writable by this user." >&2
-    echo "       Check that compose has group_add: ['109'] (host kvm group)." >&2
+    echo "       compose uses group_add: [\${KVM_GID:-109}] — set KVM_GID to your host's" >&2
+    echo "       kvm group GID before invoking compose, e.g.:" >&2
+    echo "         export KVM_GID=\$(getent group kvm | cut -d: -f3)" >&2
     ls -la /dev/kvm >&2
     id >&2
     exit 1
@@ -74,7 +75,10 @@ fi
 
 # ── AVD bootstrap ───────────────────────────────────────────────────────────
 
-if ! avdmanager list avd 2>/dev/null | grep -q "Name: ${AVD_NAME}"; then
+# Anchored exact-match against avdmanager's `Name: <name>` line so that
+# AVD_NAME=whoarewe_test doesn't false-positive against an existing
+# whoarewe_test2 (or anything else with our name as a prefix).
+if ! avdmanager list avd 2>/dev/null | grep -qxF "    Name: ${AVD_NAME}"; then
     log "Creating AVD ${AVD_NAME} (${SYSTEM_IMAGE}, ${DEVICE_PROFILE})"
     echo "no" | avdmanager create avd \
         --force \

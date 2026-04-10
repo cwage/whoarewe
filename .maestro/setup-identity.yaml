@@ -5,17 +5,25 @@ tags:
   - setup
 ---
 
-# Verifies the Setup screen UI on a fresh install: title, copy, button,
-# input field. Stops short of tapping "Create Identity" because the post-tap
-# path is the system credential bouncer (com.android.systemui), which Maestro
-# cannot drive — there is no inputText / pressKey route into the bouncer's
-# PIN field. The actual "tap Create Identity → biometric prompt → enter PIN
-# → identity row written → contact list visible" path is exercised by the
-# adb-driven e2e job in .github/workflows/e2e.yml.
+# Verifies the Setup screen UI on a fresh install: title (`WhoAreWe`),
+# the input field's label (`Your name`), the primary button (`Create
+# Identity`), and that typing into the input field actually lands the
+# text in the field. Stops short of tapping "Create Identity" because
+# the post-tap path is the system credential bouncer (com.android.systemui),
+# which Maestro cannot drive — there is no inputText / pressKey route
+# into the bouncer's PIN field. The actual "tap Create Identity →
+# biometric prompt → enter PIN → identity row written → contact list
+# visible" path is exercised by the adb-driven e2e job in
+# .github/workflows/e2e.yml.
+#
+# We deliberately do NOT assert on the `"Verify the people you trust.\n
+# Create your identity to get started."` subtitle copy: it's a single
+# Compose `Text` composable with an embedded `\n`, and Maestro's text
+# matcher does not reliably match substrings across the newline in a
+# single text node.
 #
 # Each `assertVisible` below targets text that comes from a SINGLE Compose
-# `Text` composable (no embedded newlines). Maestro's text matcher does not
-# reliably match substrings across an embedded `\n` in a single text node.
+# `Text` composable with no embedded newlines.
 
 # Maestro 2.x does NOT auto-launch the appId-declared app at the start of
 # a flow — it just attaches to whatever's on screen. Need an explicit
