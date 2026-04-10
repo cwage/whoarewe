@@ -67,70 +67,62 @@ jobs:
     timeout-minutes: 45
     needs: instrumented-tests
 
+    # This job runs the maestro flows via the same `androidtest` docker image
+    # used for local iteration (`scripts/local-maestro.sh`). Same Dockerfile,
+    # same compose service, same wrapper script — no `reactivecircus/android-
+    # emulator-runner`, no separately-installed maestro CLI. Whatever passes
+    # locally passes here, and vice versa. cwage/whoarewe#13.
+    #
+    # NOTE: only setup-identity.yaml is run here. pair-wizard-navigation.yaml
+    # depends on a debug intent (`e2e_create_identity`) that bootstraps an
+    # identity without going through BiometricPrompt — that intent and its
+    # bootstrap orchestration land in cwage/whoarewe#12, which will re-add
+    # pair-wizard-navigation to this job.
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
-
+      # Make /dev/kvm world-writable so the dockerized androidtest container
+      # (running as a non-root UID) can access it via the compose `devices:`
+      # passthrough. Same udev trick the e2e workflow uses.
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Install Maestro
+      - name: Build androidtest docker image
+        run: docker compose build androidtest
+
+      - name: Run maestro flows in container
+        # HOST_UID / HOST_GID match the runner so the container user can
+        # write into the bind-mounted project (notably the gradle build
+        # output and the .maestro-results dir). KVM_GID picks up the
+        # runner's `kvm` group GID — varies by distro / runner image,
+        # so we discover it dynamically rather than hardcoding.
+        #
+        # Defensive fallback on KVM_GID: `getent` can return an empty
+        # string if the kvm group is missing or getent itself fails, and
+        # compose's `${KVM_GID:-109}` only defaults when the var is
+        # *unset*, not when it's set to "". So we only export if non-empty
+        # and let compose's own default handle the rest.
         run: |
-          curl -Ls "https://get.maestro.mobile.dev" | bash
-          echo "$HOME/.maestro/bin" >> $GITHUB_PATH
-
-      - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon
-
-      - name: Run Maestro E2E tests
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 28
-          arch: x86_64
-          profile: Nexus 6
-          force-avd-creation: true
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
-          disable-animations: true
-          script: |
-            # Set up device PIN for biometric tests
-            adb shell locksettings set-pin 1234
-            # Install the APK
-            adb install app/build/outputs/apk/debug/app-debug.apk
-            # NOTE: `|| true` swallows Maestro failures here. cwage/whoarewe#6
-            # is the original reason it was added — biometric identity creation
-            # was broken on API 28, so setup-identity could never reach the
-            # contact list. That bug is now fixed, BUT the maestro flow still
-            # can't pass end-to-end because Maestro has no way to enter the
-            # system credential PIN bouncer (no `inputText`/`pressKey` path
-            # to the device-credential UI). Removing `|| true` therefore needs
-            # a separate change — either trim setup-identity.yaml to stop at
-            # "biometric prompt visible" or add a debug seam for in-test
-            # identity creation. Tracked separately.
-            maestro test .maestro/setup-identity.yaml || true
-            maestro test .maestro/pair-wizard-navigation.yaml || true
+          export HOST_UID=$(id -u)
+          export HOST_GID=$(id -g)
+          KVM_GID_VALUE=$(getent group kvm | cut -d: -f3 || true)
+          if [[ -n "${KVM_GID_VALUE}" ]]; then
+            export KVM_GID="${KVM_GID_VALUE}"
+          fi
+          docker compose run --rm androidtest scripts/local-maestro.sh .maestro/setup-identity.yaml
 
       - name: Upload Maestro results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: maestro-test-results
-          path: ~/.maestro/tests/
+          # local-maestro.sh copies the container's ~/.maestro/tests dir into
+          # ./.maestro-results inside the bind-mounted project on every run
+          # (success or failure), so this picks them up regardless.
+          path: .maestro-results/
+          if-no-files-found: ignore
           retention-days: 14

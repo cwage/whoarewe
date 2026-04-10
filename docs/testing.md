@@ -24,10 +24,35 @@ Runs on API 28 (Nexus 6) in CI. Does *not* exercise the Android Keystore or `Bio
 
 Surface-level YAML flows that click through the app UI:
 
-- `setup-identity.yaml` — create an identity
-- `pair-wizard-navigation.yaml` — walk the Pair wizard screens
+- `setup-identity.yaml` — verifies the Setup screen renders and accepts text input on a fresh install. Stops short of tapping "Create Identity" because the post-tap path is the system credential bouncer (`com.android.systemui`), which Maestro cannot drive — there's no `inputText` / `pressKey` route into it. The post-tap path is exercised by the e2e job in `.github/workflows/e2e.yml` instead.
+- `pair-wizard-navigation.yaml` — walks the Pair wizard screens, assuming an identity already exists. Currently disabled in CI; will be re-enabled once the `e2e_create_identity` debug intent (cwage/whoarewe#11 / #12) bootstraps an identity for it without going through `BiometricPrompt`.
 
-Fast smoke tests to catch broken navigation. They do not verify crypto correctness and currently swallow failures (`maestro test … || true`) so they do not block CI on flakiness.
+Both flows fail loudly in CI now — the `maestro-tests` job no longer wraps them in `|| true`. Any regression in either flow blocks merge.
+
+### Running maestro flows locally (dockerized)
+
+The `androidtest` service in `docker-compose.yml` boots a real headless API 28 emulator inside a container, installs the freshly-built debug APK, and runs whatever maestro flow you point it at. Backed by the same `Dockerfile` as the slim `build` service via a multi-stage `target: androidtest` that adds the emulator binary, the API 28 system image, and the maestro CLI. Used via `scripts/local-maestro.sh`:
+
+```
+docker compose run --rm androidtest scripts/local-maestro.sh
+docker compose run --rm androidtest scripts/local-maestro.sh .maestro/setup-identity.yaml
+```
+
+End-to-end iteration is roughly **30 seconds** per cycle once the AVD has been bootstrapped (8s emulator boot, ~5s install + maestro start, ~10s for a typical flow). The AVD lives in a named docker volume (`android-avd`) so it persists across `docker compose run --rm` invocations and only gets created on the very first run. Same for the gradle cache (`gradle-cache` volume).
+
+**Linux host only.** The emulator needs hardware virtualization to be remotely usable — software TCG fallback boots in 5+ minutes, which defeats the iteration loop's whole point. The compose service exposes `/dev/kvm` via `devices:` and joins the host's `kvm` group via `group_add: ["${KVM_GID:-109}"]`. The default `109` matches Ubuntu desktop; on other distros the GID may differ, in which case export it before invoking compose:
+
+```
+export HOST_UID=$(id -u) HOST_GID=$(id -g)
+export KVM_GID=$(getent group kvm | cut -d: -f3)
+docker compose run --rm androidtest scripts/local-maestro.sh .maestro/setup-identity.yaml
+```
+
+`HOST_UID` / `HOST_GID` should also be set explicitly: `docker-compose.yml` *can't* read the bash special `UID` (it's a readonly built-in that doesn't propagate to subprocess environments), so the defaults of `1000` are only correct on hosts where that happens to be your UID.
+
+KVM-in-Docker on macOS / Windows hosts (Docker Desktop) is not reliably supported, so on those hosts use a regular host-side AVD instead.
+
+**Smoke that the loop has CI parity.** Run a known-good flow with the loop and confirm `Maestro flow(s) passed.`. Run a known-broken flow (e.g. one with an invalid command) and confirm the error matches what GHA's `maestro-tests` job would produce. The same image that runs locally is the one we'd use as a local mirror of the CI job, modulo Ubuntu version drift.
 
 ## End-to-end pairing — `./scripts/run-local-e2e.sh`
 
