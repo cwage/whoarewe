@@ -4,7 +4,7 @@ Guidance for Claude Code when working on this project. Distilled from the origin
 
 ## What this project is
 
-WhoAmI is an Android app for pairwise identity verification over untrusted channels. Two people pair once (in person or via a trusted side channel), and from then on each phone displays a rotating six-digit TOTP code for the other — used to verify a caller / texter / emailer is who they claim to be, against deepfake-voice and impersonation attacks.
+WhoAreWe is an Android app for pairwise identity verification over untrusted channels. Two people pair once (in person or via a trusted side channel), and from then on each phone displays a rotating six-digit TOTP code for the other — used to verify a caller / texter / emailer is who they claim to be, against deepfake-voice and impersonation attacks.
 
 The entire value proposition is the cryptographic guarantee: *"An adversary who does not hold either device's private key cannot, at any later time and over any channel, convince one paired party that they are the other."* Everything else in the app is UI over that invariant.
 
@@ -34,9 +34,9 @@ These are product invariants. A change proposal that violates one of these shoul
 
 Core pair-and-verify loop works end-to-end on API 30+:
 
-- **Crypto**: Ed25519 keygen via BouncyCastle, Ed25519→X25519 conversion + ECDH shared-secret derivation, RFC 6238 TOTP, ZXing QR encode/decode. All in `app/src/main/java/com/whoami/app/crypto/`.
+- **Crypto**: Ed25519 keygen via BouncyCastle, Ed25519→X25519 conversion + ECDH shared-secret derivation, RFC 6238 TOTP, ZXing QR encode/decode. All in `app/src/main/java/com/whoarewe/app/crypto/`.
 - **Keystore**: `KeyManager` wraps Android Keystore with an AES-GCM key that encrypts the Ed25519 private key at rest. Biometric/device-credential unlock gated by `BiometricPrompt`.
-- **UI**: Jetpack Compose. Four screens — Setup, ContactList, PairWizard (Choose / ShowFirst / ScanAfterShow / ShowAfterScan / Done), QrDisplay. Single `WhoAmIViewModel`.
+- **UI**: Jetpack Compose. Four screens — Setup, ContactList, PairWizard (Choose / ShowFirst / ScanAfterShow / ShowAfterScan / Done), QrDisplay. Single `WhoAreWeViewModel`.
 - **Data**: Room DB with two tables — `Identity` (one row) and `TrustedContact` (many rows).
 - **Tests**: unit (`app/src/test/`), instrumented (`PairingIntegrationTest` in `app/src/androidTest/`), Maestro flows (`.maestro/`), adb-driven two-emulator e2e (`scripts/e2e-pairing.sh`, workflow `.github/workflows/e2e.yml`). Full pyramid and known gaps in [`docs/testing.md`](docs/testing.md).
 

@@ -1,4 +1,4 @@
-# WhoAmI
+# WhoAreWe
 
 Android app for pairwise identity verification over untrusted channels. After a one-time in-person pairing, each party can prove to the other that a later phone call, text, or email actually came from them — by reading a shared six-digit code that only the two paired devices can generate.
 
@@ -42,7 +42,7 @@ Three workflows run on every PR to `main`:
 
 ```
 app/                        Android application module
-  src/main/java/com/whoami/app/
+  src/main/java/com/whoarewe/app/
     crypto/                 Keystore, X25519, TOTP, QR codec
     data/                   Room entities and DAO
     ui/screens/             Compose screens
