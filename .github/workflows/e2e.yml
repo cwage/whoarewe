@@ -50,7 +50,7 @@ jobs:
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           disable-animations: true
           script: |
-            set -euxo pipefail
+            set -eux
 
             # The runner already booted emulator-5554. Launch a second one on
             # port 5556 in the background using the same AVD definition the
@@ -73,7 +73,7 @@ jobs:
             done
             adb devices
 
-            ./scripts/e2e-pairing.sh emulator-5554 emulator-5556
+            bash ./scripts/e2e-pairing.sh emulator-5554 emulator-5556
 
       - name: Upload e2e artifacts
         if: always()
