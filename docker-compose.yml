@@ -1,0 +1,12 @@
+services:
+  build:
+    build: .
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - .:/project
+      - gradle-cache:/gradle-cache
+    working_dir: /project
+    command: ["sleep", "infinity"]
+
+volumes:
+  gradle-cache:
