@@ -17,18 +17,20 @@ tags:
 # uiautomator dump + `input keyevent` keycode mapping to drive the
 # bouncer end-to-end on a real two-emulator setup.
 
-# Fresh install should show setup screen
+# Fresh install should show setup screen with all expected elements
 - assertVisible: "WhoAreWe"
 - assertVisible: "Create your identity to get started"
 - assertVisible: "Create Identity"
 
-# Button should be disabled with empty name
-- assertNotEnabled: "Create Identity"
-
-# Enter a display name
+# Type a display name and verify it lands in the input field. We
+# deliberately do NOT verify the button enable/disable transition here:
+# Maestro has no top-level `assertEnabled` / `assertNotEnabled` command
+# (despite an older version of this file using them — the calls were
+# silently swallowed by `|| true`). The selector-level `enabled: true`
+# trick on `assertVisible` is unreliable across maestro versions, so
+# the button-state check belongs in an instrumented Compose test, not
+# here. This flow's contract is just "the Setup screen renders and
+# accepts text input."
 - tapOn: "Your name"
 - inputText: "TestUser"
-
-# Button should now be enabled. This is the last assertion — see comment
-# at top for why we stop here instead of tapping through to the prompt.
-- assertEnabled: "Create Identity"
+- assertVisible: "TestUser"
