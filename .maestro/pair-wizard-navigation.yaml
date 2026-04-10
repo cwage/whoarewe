@@ -5,8 +5,18 @@ tags:
   - navigation
 ---
 
-# Assumes identity is already set up (run setup-identity first or pre-seed)
-# This tests the wizard navigation flow without actual QR scanning
+# Assumes identity has already been bootstrapped via the
+# `e2e_create_identity` debug intent in the workflow. See
+# `.github/workflows/integration-tests.yml` for the orchestration:
+# the workflow does `adb shell am start ... --es e2e_create_identity
+# TestUser` immediately before invoking this flow, which writes a
+# valid public key + sentinel encrypted blob + Identity row, so the
+# vm transitions straight into the contact list state on launch.
+#
+# launchApp here (without clearState) brings the existing app process
+# to foreground without wiping the bootstrapped state on disk.
+- launchApp:
+    clearState: false
 
 # From the contact list, tap the pair button
 - tapOn:
