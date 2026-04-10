@@ -1,6 +1,8 @@
 package com.whoami.app
 
+import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -13,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -20,18 +23,64 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import com.whoami.app.crypto.QrCodeUtils
 import com.whoami.app.crypto.QrDecoder
 import com.whoami.app.ui.screens.ContactListScreen
 import com.whoami.app.ui.screens.PairWizardScreen
 import com.whoami.app.ui.screens.SetupScreen
 import com.whoami.app.ui.theme.WhoAmITheme
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class MainActivity : FragmentActivity() {
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleE2eIntent(intent)
+    }
+
+    /**
+     * Debug-only test seam used by `scripts/e2e-pairing.sh`. Two extras are recognised:
+     *   --ez e2e_dump_qr true   → log this device's QR payload to logcat tag "WhoAmI-E2E"
+     *   --es e2e_inject_qr <s>  → feed the string into the normal onQrScanned() pipeline,
+     *                             skipping the photo picker / camera scanner UI.
+     * Bypassed entirely on release builds.
+     */
+    private fun handleE2eIntent(intent: Intent?) {
+        if (!BuildConfig.DEBUG || intent == null) return
+
+        val inject = intent.getStringExtra("e2e_inject_qr")
+        if (inject != null) {
+            intent.removeExtra("e2e_inject_qr")
+            val vm = ViewModelProvider(this)[WhoAmIViewModel::class.java]
+            Log.i("WhoAmI-E2E", "Injecting QR via intent")
+            vm.onQrScanned(inject)
+        }
+
+        if (intent.getBooleanExtra("e2e_dump_qr", false)) {
+            intent.removeExtra("e2e_dump_qr")
+            val vm = ViewModelProvider(this)[WhoAmIViewModel::class.java]
+            lifecycleScope.launch {
+                val state = vm.uiState.first { it is UiState.Main } as UiState.Main
+                val pubKey = vm.keyManager.getPublicKeyBytes()
+                if (pubKey == null) {
+                    Log.i("WhoAmI-E2E", "QR_DUMP_FAIL: public key unavailable")
+                } else {
+                    val qr = QrCodeUtils.encode(state.identity.displayName, pubKey)
+                    Log.i("WhoAmI-E2E", "QR_DUMP: $qr")
+                }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleE2eIntent(intent)
         setContent {
             WhoAmITheme {
                 Surface(
