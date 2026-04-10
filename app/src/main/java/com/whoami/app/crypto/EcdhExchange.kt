@@ -10,7 +10,7 @@ import java.security.MessageDigest
 object EcdhExchange {
 
     // Ed25519 field prime: 2^255 - 19
-    private val P = BigInteger.TWO.pow(255).subtract(BigInteger.valueOf(19))
+    private val P = BigInteger.valueOf(2).pow(255).subtract(BigInteger.valueOf(19))
 
     /**
      * Derive a shared TOTP secret from our Ed25519 private key and their Ed25519 public key.
