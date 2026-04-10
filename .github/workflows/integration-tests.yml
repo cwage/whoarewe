@@ -114,7 +114,16 @@ jobs:
             adb shell locksettings set-pin 1234
             # Install the APK
             adb install app/build/outputs/apk/debug/app-debug.apk
-            # Run Maestro flows
+            # NOTE: `|| true` swallows Maestro failures here. cwage/whoarewe#6
+            # is the original reason it was added — biometric identity creation
+            # was broken on API 28, so setup-identity could never reach the
+            # contact list. That bug is now fixed, BUT the maestro flow still
+            # can't pass end-to-end because Maestro has no way to enter the
+            # system credential PIN bouncer (no `inputText`/`pressKey` path
+            # to the device-credential UI). Removing `|| true` therefore needs
+            # a separate change — either trim setup-identity.yaml to stop at
+            # "biometric prompt visible" or add a debug seam for in-test
+            # identity creation. Tracked separately.
             maestro test .maestro/setup-identity.yaml || true
             maestro test .maestro/pair-wizard-navigation.yaml || true
 

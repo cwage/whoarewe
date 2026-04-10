@@ -56,6 +56,24 @@ class KeyManager(private val context: Context) {
                 BiometricManager.BIOMETRIC_SUCCESS
     }
 
+    /**
+     * On API < R the keystore key uses the deprecated time-bound auth model
+     * (`setUserAuthenticationValidityDurationSeconds`). In that model, calling
+     * `cipher.init(...)` itself enforces the auth window — if the user has not
+     * authenticated to the device within the validity period, init throws
+     * `UserNotAuthenticatedException` *before* `BiometricPrompt` ever runs.
+     *
+     * The fix is to invert the order on legacy: prompt first (without a
+     * CryptoObject), let success refresh the auth window, *then* init the
+     * cipher inside that window. Callers branch on this flag to pick the
+     * right ordering.
+     *
+     * On API ≥ R the key uses `setUserAuthenticationParameters`, which moves
+     * the auth check to CryptoObject unlock at prompt-time, so the cipher
+     * can be initialized up front and the prompt does the unlocking.
+     */
+    fun usesLegacyAuth(): Boolean = Build.VERSION.SDK_INT < Build.VERSION_CODES.R
+
     fun getAuthenticatorTypes(): Int {
         val manager = BiometricManager.from(context)
         val biometricAvailable = manager.canAuthenticate(

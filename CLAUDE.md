@@ -42,8 +42,20 @@ Core pair-and-verify loop works end-to-end on API 30+:
 
 ### Known issues / open tracking
 
-- **cwage/whoarewe#6** — biometric identity creation fails on API ≤ 29. `KeyManager.getEncryptionCipher()` calls `cipher.init()` before the biometric prompt runs, and the legacy `setUserAuthenticationValidityDurationSeconds(10)` path throws `UserNotAuthenticatedException`. e2e CI is pinned to API 33 as a workaround; real fix needs a pre-R code path that prompts first, inits second. `minSdk` is currently 28 so this ships broken on Pie.
-- **cwage/whoarewe#3, #4** — the tracking issues for the e2e test work that's now landing in PR #5.
+- **cwage/whoarewe#3, #4** — the tracking issues for the e2e test work that landed in PR #5.
+
+### Pre-R / API 28 biometric path
+
+`KeyManager` configures the keystore key differently by API level. On API ≥ R it uses `setUserAuthenticationParameters`, so `cipher.init()` runs upfront and `BiometricPrompt` unlocks the cipher via `CryptoObject` on success. On API < R it uses the legacy `setUserAuthenticationValidityDurationSeconds(10)`, which means `cipher.init()` itself enforces the auth window — and would throw `UserNotAuthenticatedException` if called *before* the user has authenticated.
+
+To accommodate both:
+
+- `KeyManager.usesLegacyAuth()` returns `true` on API < R.
+- The vm's `requestGenerateIdentity` and the `AddContact` path check that flag and either pre-init the cipher (modern) or leave `BiometricRequest.cipher = null` (legacy).
+- `BiometricGate` looks at `request.cipher`: non-null → `prompt.authenticate(info, CryptoObject(cipher))`; null → `prompt.authenticate(info)` only, then calls `onSuccess(null)` to signal "deferred."
+- `vm.onBiometricSuccess(cipher: Cipher?)` acquires the cipher post-auth when it's null, inside the freshly-refreshed validity window.
+
+If you change anything in this path, run the e2e job locally against an API 28 emulator, not just API 33 — the modern path is the easy case to keep working.
 
 ## Known gaps from the original MVP scope (not yet implemented or unverified)
 

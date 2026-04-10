@@ -1,6 +1,7 @@
 package com.whoarewe.app
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -206,7 +207,7 @@ class MainActivity : FragmentActivity() {
 @Composable
 fun BiometricGate(
     request: BiometricRequest?,
-    onSuccess: (javax.crypto.Cipher) -> Unit,
+    onSuccess: (javax.crypto.Cipher?) -> Unit,
     onError: (String) -> Unit,
     onCancelled: () -> Unit
 ) {
@@ -217,11 +218,23 @@ fun BiometricGate(
 
     DisposableEffect(request) {
         val executor = ContextCompat.getMainExecutor(activity)
+        // Modern path (API ≥ R): the cipher is already initialized and the
+        // prompt unlocks it via CryptoObject. Legacy path (API < R): the
+        // cipher is null on the request, the prompt runs without a CryptoObject,
+        // and the vm acquires the cipher in onBiometricSuccess once the
+        // device-credential window has been refreshed by the prompt. See
+        // KeyManager.usesLegacyAuth() / cwage/whoarewe#6.
+        val deferredCipher = request.cipher == null
         val prompt = BiometricPrompt(
             activity,
             executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    if (deferredCipher) {
+                        // Legacy path — let the vm acquire the cipher post-auth.
+                        onSuccess(null)
+                        return
+                    }
                     val cipher = result.cryptoObject?.cipher
                     if (cipher != null) {
                         onSuccess(cipher)
@@ -246,16 +259,35 @@ fun BiometricGate(
             }
         )
 
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+        val promptInfoBuilder = BiometricPrompt.PromptInfo.Builder()
             .setTitle("WhoAreWe")
             .setSubtitle(request.subtitle)
-            .setAllowedAuthenticators(
+
+        // setAllowedAuthenticators(BIOMETRIC_STRONG | DEVICE_CREDENTIAL) is
+        // only valid on API ≥ R. On API 28-29 the androidx Biometric library
+        // throws from PromptInfo.build() if you try to combine those two
+        // authenticators, so we have to use the deprecated
+        // setDeviceCredentialAllowed(true) instead. (That deprecated path
+        // forbids passing a CryptoObject, which is fine — on legacy we always
+        // run the prompt without one and acquire the cipher post-auth. See
+        // KeyManager.usesLegacyAuth() / cwage/whoarewe#6.)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            promptInfoBuilder.setAllowedAuthenticators(
                 BiometricManager.Authenticators.BIOMETRIC_STRONG or
                         BiometricManager.Authenticators.DEVICE_CREDENTIAL
             )
-            .build()
+        } else {
+            @Suppress("DEPRECATION")
+            promptInfoBuilder.setDeviceCredentialAllowed(true)
+        }
 
-        prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(request.cipher))
+        val promptInfo = promptInfoBuilder.build()
+
+        if (deferredCipher) {
+            prompt.authenticate(promptInfo)
+        } else {
+            prompt.authenticate(promptInfo, BiometricPrompt.CryptoObject(request.cipher!!))
+        }
 
         onDispose {
             prompt.cancelAuthentication()
