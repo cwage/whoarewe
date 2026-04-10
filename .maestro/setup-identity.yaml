@@ -24,9 +24,16 @@ tags:
 - launchApp:
     clearState: true
 
-# Fresh install should show setup screen with all expected elements
+# Fresh install should show setup screen with all expected elements.
+# Each assertion below targets text that comes from a SINGLE Compose
+# `Text` composable (no embedded newlines). The previous version of
+# this file asserted on "Create your identity to get started", which
+# is half of a two-line `Text("Verify the people you trust.\nCreate
+# your identity to get started.")` — Maestro's text matcher doesn't
+# reliably match substrings across embedded `\n` in a single text
+# node, so it failed even though the text is rendered on screen.
 - assertVisible: "WhoAreWe"
-- assertVisible: "Create your identity to get started"
+- assertVisible: "Your name"
 - assertVisible: "Create Identity"
 
 # Type a display name and verify it lands in the input field. We
