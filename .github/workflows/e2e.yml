@@ -43,9 +43,14 @@ jobs:
       - name: Run pairing E2E on two emulators
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 28
+          # API 33+ is required: KeyManager uses setUserAuthenticationParameters()
+          # on API 30+ so CryptoObject correctly unlocks the time-bound keystore
+          # key. API 28 uses the legacy setUserAuthenticationValidityDurationSeconds
+          # path which fails cipher.init() before BiometricPrompt ever shows.
+          api-level: 33
           arch: x86_64
-          profile: Nexus 6
+          target: default
+          profile: pixel_6
           force-avd-creation: true
           # -read-only is required so the second emulator can share the same AVD.
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -read-only
