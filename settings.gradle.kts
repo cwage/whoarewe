@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "WhoAmI"
+rootProject.name = "WhoAreWe"
 include(":app")

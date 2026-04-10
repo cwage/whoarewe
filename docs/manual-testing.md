@@ -8,7 +8,7 @@ For the fully automated two-emulator test, see [`testing.md`](testing.md).
 
 - Debug APK: `./gradlew :app:assembleDebug`
 - `adb` on your `$PATH`
-- Every device involved must have a **screen lock** (PIN, pattern, or biometric) configured *before* launching the app. WhoAmI generates a Keystore key with `setUserAuthenticationRequired(true)`, which cannot be created on a device with no secure lock.
+- Every device involved must have a **screen lock** (PIN, pattern, or biometric) configured *before* launching the app. WhoAreWe generates a Keystore key with `setUserAuthenticationRequired(true)`, which cannot be created on a device with no secure lock.
 
 ## Installing on a phone
 
@@ -29,7 +29,7 @@ adb -s <phone-serial> install -r app/build/outputs/apk/debug/app-debug.apk
 If you previously installed a release build (or a debug build signed by a different keystore), install will fail with `INSTALL_FAILED_UPDATE_INCOMPATIBLE: signatures do not match`. Uninstall first, then install — note that uninstalling wipes all app data on that device:
 
 ```
-adb -s <phone-serial> uninstall com.whoami.app
+adb -s <phone-serial> uninstall com.whoarewe.app
 adb -s <phone-serial> install app/build/outputs/apk/debug/app-debug.apk
 ```
 
@@ -67,7 +67,7 @@ Install the debug APK as in the section above. Confirm the phone has a screen lo
 
 ### 4. Create identities on both devices
 
-Launch WhoAmI on each. On each device:
+Launch WhoAreWe on each. On each device:
 
 1. Type a display name
 2. Tap **Create Identity**

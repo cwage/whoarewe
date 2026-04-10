@@ -6,11 +6,11 @@ plugins {
 }
 
 android {
-    namespace = "com.whoami.app"
+    namespace = "com.whoarewe.app"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.whoami.app"
+        applicationId = "com.whoarewe.app"
         minSdk = 28
         targetSdk = 35
         versionCode = 1

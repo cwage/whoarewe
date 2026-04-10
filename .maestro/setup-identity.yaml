@@ -1,4 +1,4 @@
-appId: com.whoami.app
+appId: com.whoarewe.app
 name: "Identity Setup Flow"
 tags:
   - smoke
@@ -6,7 +6,7 @@ tags:
 ---
 
 # Fresh install should show setup screen
-- assertVisible: "WhoAmI"
+- assertVisible: "WhoAreWe"
 - assertVisible: "Create your identity to get started"
 - assertVisible: "Create Identity"
 
@@ -28,7 +28,7 @@ tags:
 # For CI, we use the --biometric flag
 - runFlow:
     when:
-      visible: "WhoAmI"  # biometric prompt title
+      visible: "WhoAreWe"  # biometric prompt title
     commands:
       # On emulator, PIN entry is shown. Maestro will auto-handle if configured.
       - wait: 2000

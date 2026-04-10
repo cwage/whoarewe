@@ -1,6 +1,6 @@
 # Pairing and Verification
 
-WhoAmI's job is to let two humans who have met once in person prove to each other, later and remotely, that they are who they say they are — without relying on any server, account, phone number, or social graph to vouch for it.
+WhoAreWe's job is to let two humans who have met once in person prove to each other, later and remotely, that they are who they say they are — without relying on any server, account, phone number, or social graph to vouch for it.
 
 ## The core idea
 
@@ -8,7 +8,7 @@ Once Alice and Bob have paired, each of their phones displays a rotating six-dig
 
 When "Bob" later calls Alice from an unfamiliar number, or texts her from a new handle, or appears in her inbox as `robert.smith.backup@outlook.com`, she can ask:
 
-> What does your WhoAmI code for me say right now?
+> What does your WhoAreWe code for me say right now?
 
 If the caller reads back a sequence that matches what Alice's phone currently shows for Bob, Alice knows she is talking to someone in physical possession of Bob's actual device — because only that device holds the secret required to compute that code, and the code rotates every minute so a stale shoulder-surf from a month ago cannot fake it.
 
@@ -17,7 +17,7 @@ If the caller reads back a sequence that matches what Alice's phone currently sh
 The pair step establishes a **shared secret**: 20 bytes that exist on both phones and nowhere else. The secret is derived from an X25519 Elliptic Curve Diffie-Hellman exchange.
 
 1. Alice and Bob each create an identity on their own phone, which generates an Ed25519 keypair. The private key is encrypted at rest by an Android Keystore key that can only be unlocked with the user's biometric or device credential. The public key is stored in plaintext — that is what public keys are for.
-2. Each phone renders its public key as a QR code: `whoami:v1:<base64url pubkey>:<display name>`.
+2. Each phone renders its public key as a QR code: `whoarewe:v1:<base64url pubkey>:<display name>`.
 3. Alice scans Bob's QR. Her phone now knows Bob's public key.
 4. Alice biometrically unlocks her private key and her phone computes `shared_secret = X25519(alice_private, bob_public)`.
 5. Alice's phone stores a `TrustedContact` row containing Bob's name, Bob's public key, and that shared secret.
@@ -37,7 +37,7 @@ But pairing is symmetric: both phones need the shared secret, and Bob's phone st
 
 | Field | Secret? | Purpose |
 | --- | --- | --- |
-| `whoami:v1:` prefix | no | Magic bytes and version |
+| `whoarewe:v1:` prefix | no | Magic bytes and version |
 | Public key (32 bytes, base64url) | **no** | Public keys can be shouted from rooftops |
 | Display name | no | Human-readable label for the contact row |
 
@@ -54,7 +54,7 @@ A different contact produces a different shared secret and therefore a different
 ## What this is not
 
 - **Not identity verification in the legal sense.** The pairing does not prove anything about Bob's real name or biographical claims. It proves that a later communication is from the same physical device you paired with — nothing more, nothing less.
-- **Not a messenger.** There is no server, no directory, no presence, no delivery. WhoAmI has nothing to say about *how* you contact Bob in the future, only about how you recognize him when that contact happens.
+- **Not a messenger.** There is no server, no directory, no presence, no delivery. WhoAreWe has nothing to say about *how* you contact Bob in the future, only about how you recognize him when that contact happens.
 - **Not unbreakable.** If Bob loses his phone and an attacker unlocks it, the attacker can impersonate Bob to Alice until Alice notices, re-pairs, or revokes the contact. This is the same failure mode as any other secret-on-device system. Explicit revocation and re-pairing are future work.
 
 ## Threat model in one sentence

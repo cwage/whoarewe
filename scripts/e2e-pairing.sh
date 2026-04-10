@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # End-to-end pairing test driver. Drives two Android devices/emulators through
-# the full WhoAmI pairing flow via adb + uiautomator + the debug-only intent
+# the full WhoAreWe pairing flow via adb + uiautomator + the debug-only intent
 # seam in MainActivity.handleE2eIntent (e2e_dump_qr / e2e_inject_qr).
 #
 # Steps:
@@ -26,9 +26,9 @@ APK="${E2E_APK:-app/build/outputs/apk/debug/app-debug.apk}"
 PIN="${E2E_PIN:-1234}"
 NAME_A="${E2E_NAME_A:-Alice}"
 NAME_B="${E2E_NAME_B:-Bob}"
-PKG="com.whoami.app"
+PKG="com.whoarewe.app"
 ACT="$PKG/$PKG.MainActivity"
-LOG_TAG="WhoAmI-E2E"
+LOG_TAG="WhoAreWe-E2E"
 WAIT_BOOT_SECS=180
 WAIT_UI_SECS=30
 

@@ -46,7 +46,7 @@ In CI: `.github/workflows/e2e.yml` boots one emulator via `reactivecircus/androi
 This is the only test layer that runs the real production path through biometric-unlocked Keystore keys. For both devices:
 
 - `SetupScreen` typing and "Create Identity" button tap
-- Real `WhoAmIViewModel.requestGenerateIdentity` → real `KeyManager.getEncryptionCipher`
+- Real `WhoAreWeViewModel.requestGenerateIdentity` → real `KeyManager.getEncryptionCipher`
 - Real `BiometricPrompt` with device-credential fallback → real PIN entry (`1234`) driven via adb
 - Real Android Keystore AES key generation
 - Real Ed25519 keypair generation and encrypted-at-rest storage
@@ -77,8 +77,8 @@ If either of the skipped pieces ever causes real breakage, the answer is a secon
 
 `MainActivity.handleE2eIntent` accepts two intent extras, both gated on `BuildConfig.DEBUG`:
 
-- `--ez e2e_dump_qr true` — log this device's QR payload to logcat under the `WhoAmI-E2E` tag. The payload is computed via `QrCodeUtils.encode(displayName, publicKey)`, the same function the pair wizard's `ShowQrStep` composable uses.
-- `--es e2e_inject_qr <payload>` — feed a QR string into `WhoAmIViewModel.onQrScanned`, bypassing the scanner and picker UIs.
+- `--ez e2e_dump_qr true` — log this device's QR payload to logcat under the `WhoAreWe-E2E` tag. The payload is computed via `QrCodeUtils.encode(displayName, publicKey)`, the same function the pair wizard's `ShowQrStep` composable uses.
+- `--es e2e_inject_qr <payload>` — feed a QR string into `WhoAreWeViewModel.onQrScanned`, bypassing the scanner and picker UIs.
 
 Both extras are removed after handling so a stale intent cannot replay. Release builds short-circuit on the `BuildConfig.DEBUG` guard at the top of `handleE2eIntent` and carry no additional surface.
 
