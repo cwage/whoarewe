@@ -1,0 +1,39 @@
+appId: com.whoami.app
+name: "Identity Setup Flow"
+tags:
+  - smoke
+  - setup
+---
+
+# Fresh install should show setup screen
+- assertVisible: "WhoAmI"
+- assertVisible: "Create your identity to get started"
+- assertVisible: "Create Identity"
+
+# Button should be disabled with empty name
+- assertNotEnabled: "Create Identity"
+
+# Enter a display name
+- tapOn: "Your name"
+- inputText: "TestUser"
+
+# Button should now be enabled
+- assertEnabled: "Create Identity"
+
+# Create identity (this triggers biometric prompt)
+- tapOn: "Create Identity"
+
+# Biometric prompt appears - simulate with device credential
+# Maestro can handle this via `maestro mock biometric`
+# For CI, we use the --biometric flag
+- runFlow:
+    when:
+      visible: "WhoAmI"  # biometric prompt title
+    commands:
+      # On emulator, PIN entry is shown. Maestro will auto-handle if configured.
+      - wait: 2000
+
+# After identity creation, we should see the main contact list
+- assertVisible: "No trusted contacts yet"
+- assertVisible: "Your Identity"
+- assertVisible: "TestUser"

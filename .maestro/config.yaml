@@ -1,0 +1,11 @@
+# Maestro configuration
+# See https://maestro.mobile.dev/reference/configuration
+
+flows:
+  - ".maestro/*.yaml"
+
+executionOrder:
+  continueOnFailure: false
+  flowsOrder:
+    - setup-identity
+    - pair-wizard-navigation

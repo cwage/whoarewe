@@ -1,0 +1,34 @@
+appId: com.whoami.app
+name: "Pair Wizard Navigation"
+tags:
+  - wizard
+  - navigation
+---
+
+# Assumes identity is already set up (run setup-identity first or pre-seed)
+# This tests the wizard navigation flow without actual QR scanning
+
+# From the contact list, tap the pair button
+- tapOn:
+    id: "Pair with someone"
+
+# Should see the wizard choose step
+- assertVisible: "Both of you need to scan each other's code. Who goes first?"
+- assertVisible: "Scan their code first"
+- assertVisible: "Import QR from image"
+- assertVisible: "Show my code first"
+
+# Test the "show first" path
+- tapOn: "Show my code first"
+- assertVisible: "Show your code"
+- assertVisible: "Next: Scan their code"
+
+# Go to scan step
+- tapOn: "Next: Scan their code"
+- assertVisible: "Now scan their QR code"
+- assertVisible: "Scan with camera"
+- assertVisible: "Import from image"
+
+# Go back to contacts
+- tapOn:
+    id: "Back"
