@@ -58,7 +58,13 @@ jobs:
           api-level: ${{ matrix.api-level }}
           arch: x86_64
           target: default
-          profile: pixel_6
+          # `Nexus 6` is universally available across API levels (the device
+          # config predates API 28). The previous `pixel_6` profile worked on
+          # API 33 but is anachronistic on API 28 — Pixel 6 ships with
+          # Android 12 — and android-emulator-runner falls back to a different
+          # device, leading to confusing failures. Use the same profile both
+          # matrix entries for consistency.
+          profile: Nexus 6
           force-avd-creation: true
           # -read-only is required so the second emulator can share the same AVD.
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -read-only

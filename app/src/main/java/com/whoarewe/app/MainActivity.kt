@@ -1,6 +1,7 @@
 package com.whoarewe.app
 
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -258,14 +259,29 @@ fun BiometricGate(
             }
         )
 
-        val promptInfo = BiometricPrompt.PromptInfo.Builder()
+        val promptInfoBuilder = BiometricPrompt.PromptInfo.Builder()
             .setTitle("WhoAreWe")
             .setSubtitle(request.subtitle)
-            .setAllowedAuthenticators(
+
+        // setAllowedAuthenticators(BIOMETRIC_STRONG | DEVICE_CREDENTIAL) is
+        // only valid on API ≥ R. On API 28-29 the androidx Biometric library
+        // throws from PromptInfo.build() if you try to combine those two
+        // authenticators, so we have to use the deprecated
+        // setDeviceCredentialAllowed(true) instead. (That deprecated path
+        // forbids passing a CryptoObject, which is fine — on legacy we always
+        // run the prompt without one and acquire the cipher post-auth. See
+        // KeyManager.usesLegacyAuth() / cwage/whoarewe#6.)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            promptInfoBuilder.setAllowedAuthenticators(
                 BiometricManager.Authenticators.BIOMETRIC_STRONG or
                         BiometricManager.Authenticators.DEVICE_CREDENTIAL
             )
-            .build()
+        } else {
+            @Suppress("DEPRECATION")
+            promptInfoBuilder.setDeviceCredentialAllowed(true)
+        }
+
+        val promptInfo = promptInfoBuilder.build()
 
         if (deferredCipher) {
             prompt.authenticate(promptInfo)
