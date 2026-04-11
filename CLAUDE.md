@@ -84,20 +84,49 @@ Rule: do not claim "the crypto is correct" without running test vectors, and do 
 - **Commit scope**: prefer multiple small coherent commits over one mega-commit when the changes are logically separable.
 - **Before running destructive git operations** (reset --hard, force push, branch delete), ask.
 
-## Common commands
+## Running tests — use local CI, NOT the attached phone
+
+**This project has dockerized local CI.** The exact same images and commands CI runs on GitHub Actions run locally via `docker compose`. Before pushing a branch, the expectation is that you run the relevant local CI jobs and see them pass — not push to origin and watch remote CI.
+
+Do **not**:
+
+- Run `./gradlew :app:connectedDebugAndroidTest` against a device attached via `adb`. Any device that shows up in `adb devices` is the user's personal phone, likely locked, and is not a test target.
+- Run `maestro test` against an attached device for the same reason.
+- Suggest "push the branch and let CI run" as a substitute for running local CI. Local CI is the same thing, it just doesn't round-trip through GitHub.
+- Install the debug APK onto a device that appears in `adb devices` without being explicitly asked to.
+
+Do:
+
+- Run unit tests / builds in the `build` compose stage.
+- Run instrumented + maestro + e2e tests in the `androidtest` compose stage (boots an emulator inside the container, `/dev/kvm` passthrough).
+- Treat the `build` and `androidtest` services as the source of truth for "does it pass CI."
+
+### Local CI commands
 
 ```
-# Build
-./gradlew :app:assembleDebug
+# Unit tests + debug build (fast, no emulator)
+docker compose run --rm build ./gradlew :app:testDebugUnitTest :app:assembleDebug
 
-# Test layers
-./gradlew :app:testDebugUnitTest                            # unit
-./gradlew :app:connectedDebugAndroidTest                    # instrumented (needs device)
-maestro test .maestro/                                      # smoke flows
-./gradlew e2ePairing -PdeviceA=<a> -PdeviceB=<b>            # e2e explicit serials
-./scripts/run-local-e2e.sh --kill-on-exit                   # e2e with auto-booted emulators
+# Maestro flows (boots a containerized API 28 emulator, runs the same
+# invocation CI uses in .github/workflows/integration-tests.yml)
+export HOST_UID=$(id -u) HOST_GID=$(id -g)
+export KVM_GID=$(getent group kvm | cut -d: -f3)
+docker compose run --rm androidtest scripts/local-maestro.sh \
+    .maestro/setup-identity.yaml \
+    --bootstrap-identity TestUser \
+    .maestro/pair-wizard-navigation.yaml
 
-# Hands-on / real hardware
+# E2E pairing on two host emulators (two AVDs required)
+./scripts/run-local-e2e.sh --kill-on-exit
+```
+
+`KVM_GID` varies per distro, which is why compose/the wrapper scripts derive it at runtime — `${UID:-1000}` doesn't work because `UID` is a bash built-in that isn't exported to subprocess environments (the note at the top of `docker-compose.yml` explains the gotcha in detail). If `/dev/kvm` isn't mode `0666` on the host, set `KVM_GID` explicitly or the emulator inside the androidtest container can't boot.
+
+### Manual / real hardware scripts (NOT tests)
+
+These are for hands-on exploration, not CI substitutes:
+
+```
 ./scripts/manual-emu.sh                                     # boot one clean PIN'd emulator
 ./scripts/manual-pair.sh                                    # interactive phone+emulator pairing wizard
 ```
