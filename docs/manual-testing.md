@@ -12,7 +12,7 @@ Most of this doc describes a multi-step adb dance: build APK, install on both si
 ./scripts/manual-pair.sh
 ```
 
-Plug your phone in (with USB debugging authorised) and run that. With no arguments it will:
+Plug your phone in (with USB debugging authorized) and run that. With no arguments it will:
 
 1. Detect the single USB-connected phone (errors out if there are zero or multiple)
 2. Build the debug APK if missing
