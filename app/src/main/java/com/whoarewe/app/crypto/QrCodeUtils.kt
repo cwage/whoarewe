@@ -70,15 +70,19 @@ object QrCodeUtils {
      *  - **Reject empty** (after trim) — an empty name is not a name.
      *  - **Reject > [MAX_DISPLAY_NAME_LENGTH] code units** to bound row
      *    overflow and DB bloat from a maximal-capacity QR.
-     *  - **Reject Unicode Cc (control) or Cf (format)** codepoints. This kills
+     *  - **Reject Unicode Cc / Cf / Zl / Zp** codepoints. This kills
      *    embedded newlines / tabs (the "two rows rendered from one contact"
-     *    impersonation trick), the `\u202E` RTL-override homoglyph vector,
-     *    and zero-width joiners — all print-unsafe for a trust-anchor label.
+     *    impersonation trick) via Cc, the `\u202E` RTL-override homoglyph
+     *    vector and zero-width joiners via Cf, and the Unicode newline-
+     *    equivalents `U+2028` / `U+2029` via Zl / Zp — all print-unsafe
+     *    for a trust-anchor label. We deliberately do *not* reject Zs
+     *    (space separators) because regular space `U+0020` is Zs and
+     *    "Alice Smith" is a legitimate display name.
      *
      * Iterates by codepoint so astral-plane characters are handled correctly
-     * (a single emoji is one codepoint but two Java code units; Cc/Cf live
-     * entirely in the BMP today but codepoint iteration is the correct shape
-     * regardless).
+     * (a single emoji is one codepoint but two Java code units; the rejected
+     * categories all live in the BMP today but codepoint iteration is the
+     * correct shape regardless).
      */
     private fun sanitizeDisplayName(raw: String): String? {
         val normalized = Normalizer.normalize(raw, Normalizer.Form.NFC).trim()
@@ -89,7 +93,11 @@ object QrCodeUtils {
         while (i < normalized.length) {
             val cp = normalized.codePointAt(i)
             val type = Character.getType(cp)
-            if (type == Character.CONTROL.toInt() || type == Character.FORMAT.toInt()) {
+            if (type == Character.CONTROL.toInt() ||
+                type == Character.FORMAT.toInt() ||
+                type == Character.LINE_SEPARATOR.toInt() ||
+                type == Character.PARAGRAPH_SEPARATOR.toInt()
+            ) {
                 return null
             }
             i += Character.charCount(cp)

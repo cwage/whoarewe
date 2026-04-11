@@ -150,6 +150,34 @@ class QrCodeUtilsTest {
     }
 
     @Test
+    fun `decode rejects a name with a Unicode line separator`() {
+        // U+2028 is category Zl, not Cc. Compose / many text renderers still
+        // break lines on it, so it's a "two visual rows" vector that bypassed
+        // the original Cc/Cf-only check. Copilot flagged this on PR #36.
+        val encoded = QrCodeUtils.encode("Alice\u2028Bob", testKey)
+        assertNull(QrCodeUtils.decode(encoded))
+    }
+
+    @Test
+    fun `decode rejects a name with a Unicode paragraph separator`() {
+        // U+2029 is category Zp — same story as U+2028.
+        val encoded = QrCodeUtils.encode("Alice\u2029Bob", testKey)
+        assertNull(QrCodeUtils.decode(encoded))
+    }
+
+    @Test
+    fun `decode accepts a name with a regular ASCII space`() {
+        // U+0020 is Zs (SPACE_SEPARATOR). We intentionally do NOT reject
+        // Zs, because "Alice Smith" is a perfectly fine display name.
+        // This test pins that — if someone later "tightens" the filter to
+        // reject all Z* categories, it will fire here.
+        val encoded = QrCodeUtils.encode("Alice Smith", testKey)
+        val decoded = QrCodeUtils.decode(encoded)
+        assertNotNull(decoded)
+        assertEquals("Alice Smith", decoded!!.displayName)
+    }
+
+    @Test
     fun `decode NFC-normalizes combining characters to their precomposed form`() {
         // "é" can be written as U+00E9 (precomposed) or U+0065 U+0301
         // (e + combining acute accent). NFC collapses the latter to the
