@@ -29,12 +29,36 @@ object EcdhExchange {
      *  - [Ed25519.validatePublicKeyPartial] accepts it (canonical encoding,
      *    y < p, recovered x on the curve), and
      *  - y != 1 (rejecting the Edwards identity / birational singularity).
+     *
+     * Thin wrapper around [validationErrorFor] — use that directly if you
+     * need a specific reason for the rejection.
      */
-    fun isValidEd25519PublicKey(ed25519PubKey: ByteArray): Boolean {
-        if (ed25519PubKey.size != Ed25519.PUBLIC_KEY_SIZE) return false
-        if (!Ed25519.validatePublicKeyPartial(ed25519PubKey, 0)) return false
-        if (isIdentityY(ed25519PubKey)) return false
-        return true
+    fun isValidEd25519PublicKey(ed25519PubKey: ByteArray): Boolean =
+        validationErrorFor(ed25519PubKey) == null
+
+    /**
+     * Returns a human-readable reason string if [ed25519PubKey] is not a
+     * valid input to [deriveSharedSecret], or null if it is. Distinguishes
+     * "wrong length" from "failed RFC 8032 validation" from "identity point"
+     * so the caller (or the exception message in [ed25519PublicToX25519])
+     * can surface something specific instead of a catch-all error. See
+     * cwage/whoarewe#35 round 1.
+     */
+    private fun validationErrorFor(ed25519PubKey: ByteArray): String? {
+        if (ed25519PubKey.size != Ed25519.PUBLIC_KEY_SIZE) {
+            return "Ed25519 public key must be ${Ed25519.PUBLIC_KEY_SIZE} bytes, got ${ed25519PubKey.size}"
+        }
+        // Identity check must run BEFORE Ed25519.validatePublicKeyPartial:
+        // BC's partial validator also rejects (0, 1), so if we delegated to
+        // it first we would lose the "identity point" specificity and the
+        // user would see a generic "non-canonical or off-curve" message.
+        if (isIdentityY(ed25519PubKey)) {
+            return "Ed25519 public key is the identity point (y == 1), which makes the Edwards → Montgomery map singular"
+        }
+        if (!Ed25519.validatePublicKeyPartial(ed25519PubKey, 0)) {
+            return "Ed25519 public key failed RFC 8032 validation: non-canonical encoding or off-curve point"
+        }
+        return null
     }
 
     /**
@@ -99,11 +123,7 @@ object EcdhExchange {
      * @throws InvalidPublicKeyException if [ed25519PubKey] fails validation.
      */
     private fun ed25519PublicToX25519(ed25519PubKey: ByteArray): ByteArray {
-        if (!isValidEd25519PublicKey(ed25519PubKey)) {
-            throw InvalidPublicKeyException(
-                "Ed25519 public key failed validation: non-canonical encoding, off-curve point, or y == 1"
-            )
-        }
+        validationErrorFor(ed25519PubKey)?.let { throw InvalidPublicKeyException(it) }
 
         // Clear the sign-of-x bit (top bit of byte 31) to recover the 255-bit
         // little-endian y encoding that X25519Field.decode expects.

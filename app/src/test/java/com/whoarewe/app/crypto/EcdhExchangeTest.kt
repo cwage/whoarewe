@@ -149,36 +149,51 @@ class EcdhExchangeTest {
     }
 
     @Test
-    fun `deriveSharedSecret throws InvalidPublicKeyException on y equals 1`() {
+    fun `deriveSharedSecret throws InvalidPublicKeyException with identity-specific message on y equals 1`() {
         val (ourPriv, _) = generateEd25519KeyPair()
         val identity = ByteArray(32).also { it[0] = 0x01 }
         val ex = assertThrows(EcdhExchange.InvalidPublicKeyException::class.java) {
             EcdhExchange.deriveSharedSecret(ourPriv, identity)
         }
-        // Message should be human-readable and not a raw JCA trace.
         assertTrue(
-            "Message should mention the validation failure, got: ${ex.message}",
-            ex.message?.contains("validation") == true
+            "Message should mention the identity point, got: ${ex.message}",
+            ex.message?.contains("identity point") == true
         )
     }
 
     @Test
-    fun `deriveSharedSecret throws InvalidPublicKeyException on non-canonical y equals p`() {
+    fun `deriveSharedSecret throws with RFC 8032 message on non-canonical y equals p`() {
         val (ourPriv, _) = generateEd25519KeyPair()
         val yEqualsP = ByteArray(32) { 0xFF.toByte() }
         yEqualsP[0] = 0xED.toByte()
         yEqualsP[31] = 0x7F.toByte()
-        assertThrows(EcdhExchange.InvalidPublicKeyException::class.java) {
+        val ex = assertThrows(EcdhExchange.InvalidPublicKeyException::class.java) {
             EcdhExchange.deriveSharedSecret(ourPriv, yEqualsP)
         }
+        assertTrue(
+            "Message should mention RFC 8032 validation, got: ${ex.message}",
+            ex.message?.contains("RFC 8032") == true
+        )
     }
 
     @Test
-    fun `deriveSharedSecret throws InvalidPublicKeyException on wrong size`() {
+    fun `deriveSharedSecret throws with size-specific message on wrong size`() {
         val (ourPriv, _) = generateEd25519KeyPair()
-        assertThrows(EcdhExchange.InvalidPublicKeyException::class.java) {
+        val ex = assertThrows(EcdhExchange.InvalidPublicKeyException::class.java) {
             EcdhExchange.deriveSharedSecret(ourPriv, ByteArray(31))
         }
+        // The error text should call out the expected size and the actual
+        // size, not the generic "off-curve or identity" catch-all — that was
+        // the specific nit Copilot raised on PR #35 round 1.
+        val msg = ex.message ?: ""
+        assertTrue(
+            "Message should mention the expected byte count, got: $msg",
+            msg.contains("32 bytes")
+        )
+        assertTrue(
+            "Message should mention the actual (wrong) byte count, got: $msg",
+            msg.contains("got 31")
+        )
     }
 
     // ---- Existing coverage (functional correctness) ----
