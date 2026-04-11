@@ -119,4 +119,4 @@ Intents must be delivered with flags `0x30000000` (`FLAG_ACTIVITY_NEW_TASK | FLA
 | `integration-tests.yml` | API 28 Nexus 6 | Instrumented tests + Maestro flows |
 | `e2e.yml` | API 33 Pixel 6 ×2 | End-to-end pairing harness |
 
-The e2e job is pinned to API 33 because `KeyManager` uses `setUserAuthenticationParameters` on API 30+ and a time-bound key on API ≤ 29. The legacy path currently breaks the biometric flow and is tracked in cwage/whoarewe#6.
+The e2e job runs a matrix of API 28 and API 33 so the two Keystore-auth paths stay covered. `KeyManager` uses `setUserAuthenticationParameters` on API 30+ (cipher init up front, `BiometricPrompt` unlocks via `CryptoObject`) and falls back to `setUserAuthenticationValidityDurationSeconds(10)` on API ≤ 29 (the prompt refreshes the auth window first, then the vm initializes the cipher post-auth inside that window). The legacy path was historically broken end-to-end (cwage/whoarewe#6) and is now covered by the `pairing (28)` job.

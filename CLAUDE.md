@@ -40,10 +40,6 @@ Core pair-and-verify loop works end-to-end on API 30+:
 - **Data**: Room DB with two tables — `Identity` (one row) and `TrustedContact` (many rows).
 - **Tests**: unit (`app/src/test/`), instrumented (`PairingIntegrationTest` in `app/src/androidTest/`), Maestro flows (`.maestro/`), adb-driven two-emulator e2e (`scripts/e2e-pairing.sh`, workflow `.github/workflows/e2e.yml`). Full pyramid and known gaps in [`docs/testing.md`](docs/testing.md).
 
-### Known issues / open tracking
-
-- **cwage/whoarewe#3, #4** — the tracking issues for the e2e test work that landed in PR #5.
-
 ### Pre-R / API 28 biometric path
 
 `KeyManager` configures the keystore key differently by API level. On API ≥ R it uses `setUserAuthenticationParameters`, so `cipher.init()` runs upfront and `BiometricPrompt` unlocks the cipher via `CryptoObject` on success. On API < R it uses the legacy `setUserAuthenticationValidityDurationSeconds(10)`, which means `cipher.init()` itself enforces the auth window — and would throw `UserNotAuthenticatedException` if called *before* the user has authenticated.
@@ -100,9 +96,13 @@ Rule: do not claim "the crypto is correct" without running test vectors, and do 
 maestro test .maestro/                                      # smoke flows
 ./gradlew e2ePairing -PdeviceA=<a> -PdeviceB=<b>            # e2e explicit serials
 ./scripts/run-local-e2e.sh --kill-on-exit                   # e2e with auto-booted emulators
+
+# Hands-on / real hardware
+./scripts/manual-emu.sh                                     # boot one clean PIN'd emulator
+./scripts/manual-pair.sh                                    # interactive phone+emulator pairing wizard
 ```
 
-Requirements: JDK 21, Android SDK (`minSdk` 28, `targetSdk` 35). E2E needs two Android emulators (API 30+ until cwage/whoarewe#6 is fixed).
+Requirements: JDK 21, Android SDK (`minSdk` 28, `targetSdk` 35). E2E needs two Android emulators. Both the legacy (API ≤ 29) and modern (API ≥ 30) Keystore-auth paths are exercised by the `pairing (28)` and `pairing (33)` jobs in `.github/workflows/e2e.yml`, so if you touch `KeyManager.ensureKeyStoreKey` or the `BiometricGate` composable, run both locally before pushing.
 
 ## Tests vs. reality — don't undo the intent seam
 

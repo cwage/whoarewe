@@ -4,6 +4,39 @@ Sometimes you want to try the app by hand — install it on your own phone, pair
 
 For the fully automated two-emulator test, see [`testing.md`](testing.md).
 
+## The easy path: `scripts/manual-pair.sh`
+
+Most of this doc describes a multi-step adb dance: build APK, install on both sides, create identities, ferry QR screenshots between devices, compare codes. All of that is now wrapped in one wizard script:
+
+```
+./scripts/manual-pair.sh
+```
+
+Plug your phone in (with USB debugging authorised) and run that. With no arguments it will:
+
+1. Detect the single USB-connected phone (errors out if there are zero or multiple)
+2. Build the debug APK if missing
+3. Uninstall + reinstall `com.whoarewe.app` on the phone for clean data
+4. Boot a fresh emulator via [`scripts/manual-emu.sh`](../scripts/manual-emu.sh) (wipes the AVD, sets PIN `1234`, installs APK, unlocks) — or reuse an already-running one on port 5554
+5. Launch the app on both sides
+6. Walk you through identity creation on each (you enter your real biometric on the phone and `1234` on the emulator)
+7. Walk you through the pair wizard step-by-step, automatically screencapping one device after each step and pushing the PNG into the other device's `Pictures/Screenshots/` directory with a `MEDIA_SCANNER_SCAN_FILE` broadcast so it appears as the newest photo in the photo picker
+8. Scrape the rendered six-digit TOTP code off both devices' contact lists via `uiautomator dump`, retry a few times to absorb any TOTP window-boundary race, and assert they match
+
+Flags cover the non-default shapes:
+
+```
+--phone SERIAL       force a specific phone when multiple are attached
+--emu SERIAL         reuse a specific emulator serial
+--avd NAME           which AVD manual-emu.sh should boot (default: first)
+--pin NNNN           custom emulator PIN (default 1234)
+--port NNNN          emulator port (default 5554)
+--skip-install       don't touch existing installs on either side
+--swap-roles         emulator is "show first", phone is "scan first"
+```
+
+The rest of this doc is the "what's actually happening under the hood" reference for when the script breaks, or when you want to drive one of the steps by hand (e.g. enrolling a simulated fingerprint on the emulator instead of using the PIN bouncer).
+
 ## Prerequisites
 
 - Debug APK: `./gradlew :app:assembleDebug`
@@ -37,15 +70,19 @@ adb -s <phone-serial> install app/build/outputs/apk/debug/app-debug.apk
 
 The most useful manual setup: one real device (real fingerprint sensor, real hardware Keystore) paired with an emulator you can poke with adb.
 
+> **Shortcut:** steps 1, 3, 4, 5 and 6 below are automated by [`scripts/manual-pair.sh`](../scripts/manual-pair.sh). Step 1 alone is automated by [`scripts/manual-emu.sh`](../scripts/manual-emu.sh) if you only need a fresh, pinned, APK-installed emulator for some other purpose. The hand-driven versions below are the reference for what those scripts do under the hood.
+
 ### 1. Boot an emulator with a PIN
 
 ```
-~/Android/Sdk/emulator/emulator -avd <your-avd> -port 5554 &
+~/Android/Sdk/emulator/emulator -avd <your-avd> -wipe-data -no-snapshot-load -no-snapshot-save -port 5554 &
 adb -s emulator-5554 wait-for-device
 adb -s emulator-5554 shell locksettings set-pin 1234
 ```
 
 The PIN gives the app a device credential to fall back on when biometric isn't available. `1234` is arbitrary — pick whatever you want, the app never sees it.
+
+The three `-wipe-data -no-snapshot-load -no-snapshot-save` flags together are what guarantee a clean boot. Any of them alone is insufficient — `-no-snapshot-save` only prevents *saving* state back on shutdown, so a previously-saved snapshot will still reload on the next boot and bring back a stale identity from some earlier session. Ask me how I know.
 
 ### 2. Simulated fingerprint on the emulator (optional)
 
@@ -83,28 +120,21 @@ On whichever device goes first, tap the **Pair** icon (top right) → **Show my 
 
 On the other device, tap **Pair** → **Scan their code first** → **Import QR from image**. You need the first device's QR in this device's photo library.
 
-**Phone-to-emulator transfer:**
-
-Take a screenshot on the phone (power + volume-down). Then on your host:
+**Phone-to-emulator transfer** (or any direction — the commands are symmetric, just swap the `-s` targets):
 
 ```
-adb -s <phone-serial> pull /sdcard/Pictures/Screenshots/<latest>.png /tmp/qr.png
-adb -s emulator-5554 push /tmp/qr.png /sdcard/Download/qr.png
-adb -s emulator-5554 shell am broadcast \
+adb -s <from-serial> exec-out screencap -p > /tmp/qr.png
+adb -s <to-serial>   push /tmp/qr.png /sdcard/Pictures/Screenshots/qr.png
+adb -s <to-serial>   shell am broadcast \
     -a android.intent.action.MEDIA_SCANNER_SCAN_FILE \
-    -d file:///sdcard/Download/qr.png
+    -d file:///sdcard/Pictures/Screenshots/qr.png
 ```
 
-The `MEDIA_SCANNER_SCAN_FILE` broadcast pokes the media store so the new PNG shows up in the photo picker grid immediately.
+`exec-out screencap -p` streams the PNG bytes straight to host stdout — no intermediate `/sdcard` round-trip on the source side. The `MEDIA_SCANNER_SCAN_FILE` broadcast pokes the media store so the new PNG shows up in the photo picker grid immediately; without it the file is on disk but the picker doesn't know about it.
 
-**Emulator-to-phone transfer:**
+Push target matters: `/sdcard/Pictures/Screenshots/` is what the photo picker surfaces by default. `/sdcard/Download/` may or may not show up in the picker's "recent" grid depending on the system image.
 
-```
-adb -s emulator-5554 shell screencap -p /sdcard/qr.png
-adb -s emulator-5554 pull /sdcard/qr.png /tmp/qr.png
-```
-
-Then move `/tmp/qr.png` to the phone however you normally move files (AirDrop, Syncthing, Google Photos upload, email to yourself, etc).
+If the target is your real phone and you'd rather keep the screenshot out of `adb push` entirely, the `/tmp/qr.png` from the `exec-out screencap` above is just a PNG on your host — move it to the phone however you normally move files (AirDrop, Syncthing, Google Photos, email to yourself, etc) and pick it with the photo picker from there.
 
 ### 6. Complete the exchange
 
@@ -118,7 +148,7 @@ Both devices should now show each other in the contact list, each with a rotatin
 
 ## Gotchas
 
-- **API ≤ 29 biometric is currently broken.** See cwage/whoarewe#6. Use API 30+ for manual testing until that's fixed.
+- **API 28 / 29 use the legacy Keystore auth path.** On those API levels `KeyManager` configures the key with `setUserAuthenticationValidityDurationSeconds(10)` instead of `setUserAuthenticationParameters`, which forces `cipher.init()` to run *after* `BiometricPrompt` has refreshed the auth window. The app handles this automatically — you don't have to do anything — but if something breaks in the keygen or AddContact path on an old emulator and works fine on API 30+, that's where to start looking. The legacy path is covered by the `pairing (28)` job in `.github/workflows/e2e.yml` and was historically broken (cwage/whoarewe#6, fixed in PR #10).
 - **Photo picker grid caching.** If a freshly pushed PNG doesn't show up in the picker, the `MEDIA_SCANNER_SCAN_FILE` broadcast above usually fixes it. On some system images you may need to kill and relaunch the app so the picker re-reads the media store.
 - **Simulated fingerprint needs a real enrollment first.** `emu finger touch N` authenticates against fingerprint ID `N` — but `N` has to have been enrolled through the settings wizard. Fresh emulators have no enrolled prints.
 - **Screenshot contrast.** On phones with very dark UI themes, screenshotting the QR code can sometimes produce images ZXing struggles to decode. If a scan fails, try taking the screenshot while the pair wizard is on a bright/white background.
