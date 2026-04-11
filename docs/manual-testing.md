@@ -148,13 +148,16 @@ Both devices should now show each other in the contact list, each with a rotatin
 
 ## What to verify: screen capture protection
 
-Since cwage/whoarewe#22, the app sets `FLAG_SECURE` on the window whenever a TOTP code could be visible — the contact list and the non-QR steps of the pair wizard. This blocks the stock screenshot button, `MediaProjection` screen recorders, the task-switcher / recents thumbnail, and cast/mirror displays from capturing the codes.
+Since cwage/whoarewe#22, the app window is `FLAG_SECURE` by default — the flag is set in `MainActivity.onCreate` before the first frame is composed — and is cleared only while the pair wizard is on **Show your code** / **Almost done** (the two steps that display the user's own QR, which must stay captureable for manual pairing). Everything else (Loading, Setup, contact list, Choose / Scan their code / Paired!) stays secure.
+
+`FLAG_SECURE` blocks the stock screenshot button, `MediaProjection` screen recorders, the task-switcher / recents thumbnail, and cast/mirror displays from capturing whatever the window is currently showing.
 
 Quick sanity checks on a real device:
 
-- On the **contact list**: press the screenshot button. You should get the system's "Can't take screenshot due to app policy" toast, not an image. Background the app with the recents gesture — the app's tile should be blank, not a readable copy of the code list.
-- In the pair wizard on **Show your code** / **Almost done** (ShowFirst / ShowAfterScan): the screenshot button must still work. These screens intentionally display the user's own QR, and manual pairing relies on being able to `adb exec-out screencap -p` them (see `scripts/manual-pair.sh`'s `transfer_qr`).
-- On **Setup** and **Choose / Scan their code / Paired!**: screenshot behavior is currently "secure" too (no secrets on those screens, but cheaper to leave the flag on than to toggle it).
+- On the **contact list**: press the screenshot button. On modern Pixels (API 33+) you still get a PNG file, but the app surface composites as solid black — only the system status bar at the top is visible, no TOTP codes. Older Android versions show a "Can't take screenshot due to app policy" toast instead. Either way, the codes are not in the capture.
+- Background the app from the contact list with the recents gesture — the WhoAreWe tile in the task switcher should render as blank / no readable code list.
+- In the pair wizard on **Show your code** / **Almost done** (ShowFirst / ShowAfterScan): the screenshot button must still work and capture a real QR image. Manual pairing relies on `adb exec-out screencap -p` working here (see `scripts/manual-pair.sh`'s `transfer_qr`). If these screens also screenshot as black, the predicate in `MainActivity` is inverted.
+- On **Setup** and **Choose / Scan their code / Paired!**: screenshot behavior is also secure (no secrets on those screens, but defaulting to secure and only exempting the QR screens is simpler and avoids any window where the flag is off by mistake).
 
 What this does **not** block: a camera pointed at the screen, accessibility-service text exfiltration (tracked separately in cwage/whoarewe#28), or a rooted adversary reading the framebuffer. `FLAG_SECURE` is a screen-capture defence, not a full confidentiality guarantee.
 
