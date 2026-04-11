@@ -30,8 +30,9 @@ object EcdhExchange {
      *    y < p, recovered x on the curve), and
      *  - y != 1 (rejecting the Edwards identity / birational singularity).
      *
-     * Thin wrapper around [validationErrorFor] — use that directly if you
-     * need a specific reason for the rejection.
+     * This is a boolean-only precheck. Callers that need a specific failure
+     * reason should let [deriveSharedSecret] throw and read the message from
+     * the resulting [InvalidPublicKeyException].
      */
     fun isValidEd25519PublicKey(ed25519PubKey: ByteArray): Boolean =
         validationErrorFor(ed25519PubKey) == null
