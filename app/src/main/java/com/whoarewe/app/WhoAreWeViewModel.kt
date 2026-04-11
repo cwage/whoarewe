@@ -184,7 +184,21 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
             // Loading / already-Locked states have nothing to clear, and
             // locking from them would incorrectly re-fire the unlock
             // biometric on return from a brief background.
-            if (_uiState.value is UiState.Main) {
+            //
+            // Crucially, skip re-lock while a biometric prompt is
+            // in-flight (`_biometricRequest.value != null`): on API 28
+            // legacy auth, the BiometricPrompt + DEVICE_CREDENTIAL path
+            // launches the system credential bouncer as a *separate*
+            // activity, which stops MainActivity and fires this callback
+            // mid-prompt. Without this guard, lock() would then clear
+            // the pending biometric request, and when the user enters
+            // their PIN and BiometricPrompt finally fires our
+            // onBiometricSuccess callback, `request = _biometricRequest.value
+            // ?: return` early-returns and the pair flow dies silently.
+            // On API 33 the prompt is an in-process dialog that does not
+            // stop the activity, so the race is invisible there — but
+            // the guard is the correct fix across all APIs.
+            if (_uiState.value is UiState.Main && _biometricRequest.value == null) {
                 Log.d("WhoAreWe", "ProcessLifecycle onStop: re-locking")
                 lock()
             }
@@ -219,9 +233,11 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                 enterMainState(identity)
                 return@launch
             }
-            // Normal path: identity + real wrapped blob on disk. Stay in
-            // Locked until the unlock biometric resolves.
-            _uiState.value = UiState.Locked()
+            // Normal path: requestUnlock() sets biometricRequest and then
+            // transitions state to Locked, in that order, so collectors
+            // watching `uiState.first { it is Locked }` are guaranteed to
+            // see a non-null biometricRequest at wake-up time. See
+            // requestUnlock()'s KDoc for the race explanation.
             requestUnlock()
         }
     }
@@ -231,11 +247,24 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
      * the decryption cipher is pre-initialized so the prompt unlocks it
      * via CryptoObject; on legacy we defer to post-auth. Identical shape
      * to [requestBiometricForContact] but uses [BiometricPurpose.Unlock].
+     *
+     * Ordering is load-bearing: the biometric request is emitted *before*
+     * the state transitions to [UiState.Locked], so any observer watching
+     * `uiState.first { it is Locked }` on a separate dispatcher is
+     * guaranteed to see a non-null [biometricRequest] at the moment it
+     * wakes up. Doing it the other way round (set Locked first, then set
+     * biometric request) races: the collector can wake up on the state
+     * change and read `biometricRequest.value` *before* the second
+     * assignment lands, observing a spurious "Locked with nothing
+     * pending" state. That race is how [WhoAreWeViewModelLockTest]'s
+     * `init_withRealIdentityFiles_landsOnLockedAndRequestsUnlock` flake
+     * manifested on API 28 in CI while passing on API 33 (timing
+     * difference between dispatchers, not a semantic difference).
      */
     private fun requestUnlock() {
-        try {
+        val request = try {
             val cipher = if (keyManager.usesLegacyAuth()) null else keyManager.getDecryptionCipher()
-            _biometricRequest.value = BiometricRequest(
+            BiometricRequest(
                 cipher = cipher,
                 purpose = BiometricPurpose.Unlock,
                 subtitle = "Unlock WhoAreWe"
@@ -243,16 +272,26 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
         } catch (e: Exception) {
             Log.e("WhoAreWe", "Failed to get cipher for unlock", e)
             _uiState.value = UiState.Locked(error = e.message ?: "Unlock failed")
+            return
         }
+        _biometricRequest.value = request
+        // Clears any prior Locked(error) on retry — `Locked() != Locked(error)`
+        // so StateFlow emits. On first call from init the current state is
+        // Loading, so this is the Loading→Locked transition the UI is
+        // waiting for. In all cases, by the time this line runs the
+        // biometric request is already set above, so observers see a
+        // coherent (Locked, biometricRequest) pair.
+        _uiState.value = UiState.Locked()
     }
 
     /**
      * Re-emits the unlock biometric request. The Locked screen's retry
      * button calls this after the user cancels the auto-fired prompt.
+     * [requestUnlock] itself re-sets the Locked state (clearing any
+     * previous error), so no extra state assignment needed here.
      */
     fun retryUnlock() {
         if (_uiState.value is UiState.Locked) {
-            _uiState.value = UiState.Locked()
             requestUnlock()
         }
     }
