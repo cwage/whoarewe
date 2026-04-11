@@ -268,21 +268,35 @@ class KeyManager(private val context: Context) {
     }
 
     private fun unpackIdentityBlob(blob: ByteArray): DecryptedIdentity {
-        if (blob.size < 4) {
-            throw KeyInvalidatedException("Identity blob is truncated (len=${blob.size})")
+        // Strict size validation: a tampered or corrupted blob must be
+        // rejected here rather than downstream at `TotpSecretCodec.decrypt`
+        // (which only knows "DEK wasn't 32 bytes") or at ECDH (which only
+        // knows "private key wasn't 32 bytes"). Pin the exact expected
+        // layout so either failure mode surfaces as KeyInvalidatedException
+        // — the same class callers already handle for "re-enrollment
+        // needed". See Copilot round 1 on PR #38.
+        val expectedSize = 4 + TotpSecretCodec.DEK_BYTES + Ed25519PrivateKeyParameters.KEY_SIZE
+        if (blob.size != expectedSize) {
+            throw KeyInvalidatedException(
+                "Identity blob has unexpected total size ${blob.size}, expected $expectedSize"
+            )
         }
         val dekLen = ByteBuffer.wrap(blob).getInt(0)
-        if (dekLen <= 0 || 4 + dekLen > blob.size) {
-            throw KeyInvalidatedException("Identity blob has invalid DEK length $dekLen")
+        if (dekLen != TotpSecretCodec.DEK_BYTES) {
+            throw KeyInvalidatedException(
+                "Identity blob has unexpected DEK length $dekLen, expected ${TotpSecretCodec.DEK_BYTES}"
+            )
         }
-        val dek = ByteArray(dekLen)
-        System.arraycopy(blob, 4, dek, 0, dekLen)
-        val privateKeyLen = blob.size - 4 - dekLen
-        if (privateKeyLen <= 0) {
-            throw KeyInvalidatedException("Identity blob has no private key material")
-        }
-        val privateKey = ByteArray(privateKeyLen)
-        System.arraycopy(blob, 4 + dekLen, privateKey, 0, privateKeyLen)
+        val dek = ByteArray(TotpSecretCodec.DEK_BYTES)
+        System.arraycopy(blob, 4, dek, 0, TotpSecretCodec.DEK_BYTES)
+        val privateKey = ByteArray(Ed25519PrivateKeyParameters.KEY_SIZE)
+        System.arraycopy(
+            blob,
+            4 + TotpSecretCodec.DEK_BYTES,
+            privateKey,
+            0,
+            Ed25519PrivateKeyParameters.KEY_SIZE
+        )
         return DecryptedIdentity(dek = dek, privateKey = privateKey)
     }
 
@@ -319,15 +333,22 @@ class KeyManager(private val context: Context) {
      * than a real biometric-unlocked identity. The vm uses this to skip
      * the unlock biometric gate in e2e mode. See cwage/whoarewe#32.
      *
-     * The detection is by exact byte match against [SENTINEL_BLOB]. A real
-     * encrypted identity blob is at minimum `4 + 32 + 32` bytes plaintext
-     * plus a GCM tag after encryption, so the one-byte sentinel cannot
-     * collide with a legitimately-wrapped identity.
+     * Detection requires **both** [encryptedKeyFile] and [ivFile] to match
+     * the sentinel exactly — `e2eWriteIdentityFilesForTest` writes the
+     * same one-byte payload to both, so a real encrypted identity would
+     * never match (its IV alone is 12 bytes). Matching on both narrows
+     * the chance of a partially-written or corrupted blob accidentally
+     * triggering the bypass path. Callers should additionally gate on
+     * `BuildConfig.DEBUG` so a release build cannot be tricked into
+     * skipping the biometric unlock even in principle — see Copilot
+     * round 1 on PR #38.
      */
     fun hasSentinelKey(): Boolean {
-        val f = encryptedKeyFile()
-        if (!f.exists()) return false
-        return f.readBytes().contentEquals(SENTINEL_BLOB)
+        val enc = encryptedKeyFile()
+        val iv = ivFile()
+        if (!enc.exists() || !iv.exists()) return false
+        return enc.readBytes().contentEquals(SENTINEL_BLOB) &&
+            iv.readBytes().contentEquals(SENTINEL_BLOB)
     }
 
     private fun deleteKeys() {

@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import javax.crypto.Cipher
 
 sealed class BiometricPurpose {
@@ -155,8 +156,15 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
      * pair. The TOTP tick loop reads from this map instead of hitting the
      * DAO-backed ciphertext every tick — the hot path never touches the
      * Keystore or the on-disk encrypted column after unlock.
+     *
+     * Backed by [ConcurrentHashMap] because writes happen from several
+     * dispatchers: the Main tick loop only reads, but [ensureCacheContains]
+     * writes from [Dispatchers.Default] (AES-GCM off the UI thread — see
+     * Copilot round 1 on PR #38) and [persistPairedContact] writes from
+     * [Dispatchers.IO] (during the DAO-backed pair transaction). A plain
+     * [HashMap] would race in that setup.
      */
-    private val totpSecretCache = mutableMapOf<Long, ByteArray>()
+    private val totpSecretCache = ConcurrentHashMap<Long, ByteArray>()
 
     /**
      * Handle for the coroutine that runs [enterMainState]'s contact-flow
@@ -222,13 +230,18 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                 _uiState.value = UiState.Setup()
                 return@launch
             }
-            if (keyManager.hasSentinelKey()) {
+            if (BuildConfig.DEBUG && keyManager.hasSentinelKey()) {
                 // Maestro e2e bootstrap — identity files are sentinel values
                 // that would fail any real decryption. Skip the unlock gate
                 // and go straight to Main with an empty cache; any test that
                 // tries to actually pair through this seam already uses the
                 // two-emulator harness that runs the real biometric path.
                 // See KeyManager.hasSentinelKey().
+                //
+                // Double-gated: BuildConfig.DEBUG first, so a release build
+                // cannot possibly reach this path even with a crafted
+                // on-disk blob that happens to match the sentinel shape.
+                // See Copilot round 1 on PR #38.
                 Log.d("WhoAreWe", "init: sentinel identity detected, skipping unlock")
                 enterMainState(identity)
                 return@launch
@@ -378,26 +391,37 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
      * hold in [totpSecretCache]. Silently skips rows if the DEK hasn't
      * been unwrapped yet (sentinel e2e path) — those rows just render
      * with an empty code until the cache catches up.
+     *
+     * The AES-GCM decryption loop runs on [Dispatchers.Default] rather
+     * than the caller's (typically Main-immediate) dispatcher so a
+     * contact list with a few dozen rows doesn't jank the UI thread on
+     * every unlock or DAO emission. [totpSecretCache] is a
+     * [ConcurrentHashMap] (see its field KDoc), so concurrent
+     * `containsKey`/`put` from the Default dispatcher is safe against
+     * the Main-side reads in the tick loop and the IO-side writes in
+     * `persistPairedContact`. See Copilot round 1 on PR #38.
      */
-    private fun ensureCacheContains(contacts: List<TrustedContact>) {
+    private suspend fun ensureCacheContains(contacts: List<TrustedContact>) {
         val dek = totpDek ?: return
-        for (contact in contacts) {
-            if (totpSecretCache.containsKey(contact.id)) continue
-            try {
-                val plaintext = TotpSecretCodec.decrypt(
-                    TotpSecretCodec.EncryptedSecret(
-                        ciphertext = contact.encryptedTotpSecret,
-                        iv = contact.totpSecretIv
-                    ),
-                    dek
-                )
-                totpSecretCache[contact.id] = plaintext
-            } catch (e: Exception) {
-                // Row is unreadable with our DEK — log loudly but don't
-                // crash the whole Main state. A test that writes ad-hoc
-                // row bytes (e.g. legacy ContactDao tests using stub IVs)
-                // will hit this path rather than taking down the app.
-                Log.w("WhoAreWe", "Failed to decrypt totpSecret for id=${contact.id}", e)
+        withContext(Dispatchers.Default) {
+            for (contact in contacts) {
+                if (totpSecretCache.containsKey(contact.id)) continue
+                try {
+                    val plaintext = TotpSecretCodec.decrypt(
+                        TotpSecretCodec.EncryptedSecret(
+                            ciphertext = contact.encryptedTotpSecret,
+                            iv = contact.totpSecretIv
+                        ),
+                        dek
+                    )
+                    totpSecretCache[contact.id] = plaintext
+                } catch (e: Exception) {
+                    // Row is unreadable with our DEK — log loudly but
+                    // don't crash the whole Main state. A test that
+                    // writes ad-hoc row bytes will hit this path
+                    // rather than taking down the app.
+                    Log.w("WhoAreWe", "Failed to decrypt totpSecret for id=${contact.id}", e)
+                }
             }
         }
     }
@@ -916,12 +940,16 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
      * (cwage/whoarewe#32) — the e2e harness compares plaintext hex, so
      * the seam has to surface plaintext.
      *
-     * The dao call first waits for the initial emission of the contact
-     * list to guarantee the cache has been populated via
-     * `ensureCacheContains` before we iterate.
+     * Calls [ensureCacheContains] directly rather than relying on the
+     * separate `enterMainState` collector having already populated the
+     * cache. Those are two independent flow collectors and racing one
+     * against the other would make this seam non-deterministic — e.g.
+     * return fewer rows than the DB has during a pair flow. See
+     * Copilot round 1 on PR #38.
      */
     suspend fun e2eDumpContactSecrets(): List<Pair<String, String>> {
         val contacts = dao.getAllContacts().first()
+        ensureCacheContains(contacts)
         return contacts.mapNotNull { contact ->
             val plaintext = totpSecretCache[contact.id] ?: return@mapNotNull null
             contact.displayName to HexCodec.bytesToHex(plaintext)
