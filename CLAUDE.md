@@ -73,8 +73,9 @@ These are the paths where it's easy to produce plausible-looking code that passe
 1. **Ed25519 → X25519 conversion** (`EcdhExchange.kt`). Uses BouncyCastle primitives — do not replace with hand-rolled math.
 2. **TOTP correctness.** RFC 6238 Appendix B test vectors must pass. `TotpGeneratorTest` covers this — if it ever starts failing, that is not a "fix the test" situation.
 3. **QR payload parsing.** Must reject malformed input, not be lenient. `QrCodeUtils.decode()` rejects on length and prefix mismatches; fuzz coverage is modest.
-4. **Keystore hardware-backing detection** — not yet implemented, listed above.
-5. **Shared secret at rest** — not yet hardened, listed above.
+4. **Hex encoding.** All byte ↔ hex conversion must go through `HexCodec.bytesToHex` / `HexCodec.hexToBytes` (cwage/whoarewe#15). Do **not** reimplement inline. The obvious-looking `joinToString { "%02x".format(it) }` pattern is silently wrong for any byte ≥ 0x80 because Kotlin `Byte` is signed and `String.format` sign-extends to `Int`. The bug went undetected for a long time because both sides of every comparison applied the same buggy encoder, so the symmetric corruption cancelled out functionally — but the stored hex strings did not actually round-trip back to the original bytes. `HexCodecTest` covers the regression; if you find yourself adding a new `%02x` site, route it through `HexCodec` instead.
+5. **Keystore hardware-backing detection** — not yet implemented, listed above.
+6. **Shared secret at rest** — not yet hardened, listed above.
 
 Rule: do not claim "the crypto is correct" without running test vectors, and do not hand-roll new crypto without a very explicit reason and human review.
 
