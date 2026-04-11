@@ -141,20 +141,45 @@ if [[ "${val:-}" != "1" ]]; then
 fi
 echo "[manual-emu] $SERIAL booted"
 
+# PIN is typed as individual digit keyevents below rather than `input text`.
+# The secure keyguard bouncer on many Android versions is button-based and
+# silently drops `input text`, so we validate up-front that the PIN is
+# all-digits — anything else can't possibly unlock via this path.
+if [[ ! "$PIN" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: --pin must be all digits (got '$PIN'), otherwise the" >&2
+    echo "       keyguard unlock path below cannot dismiss the bouncer." >&2
+    exit 1
+fi
+
 echo "[manual-emu] setting device PIN to $PIN..."
 "$ADB" -s "$SERIAL" shell locksettings set-pin "$PIN"
 
 echo "[manual-emu] installing $APK..."
 "$ADB" -s "$SERIAL" install "$APK" >/dev/null
 
-# Unlock the keyguard so the launcher is visible. This is a swipe-up to
-# reveal the PIN pad, then the PIN, then enter. Matches what the e2e harness
-# does to get past the lockscreen after boot.
+# Keep the screen awake once we've unlocked so the keyguard doesn't re-arm
+# the moment the human looks away. This matches what scripts/e2e-pairing.sh
+# does on boot (`svc power stayon true`) and is the difference between
+# "the emulator is usable for the next 15 minutes" and "oh no the lockscreen
+# came back and now I have to re-unlock halfway through a pair wizard step".
+"$ADB" -s "$SERIAL" shell svc power stayon true >/dev/null
+
+# Dismiss the keyguard. Wake the screen, then send the PIN digits as
+# individual KEYCODE_N keyevents plus ENTER. We do NOT use `input text`
+# here because the secure PIN bouncer on several Android system images
+# only accepts button-style input and silently drops a text event — a
+# bug scripts/e2e-pairing.sh was already fighting with, so we match its
+# approach (see unlock_keyguard() in that script).
 echo "[manual-emu] unlocking keyguard..."
-"$ADB" -s "$SERIAL" shell input keyevent KEYCODE_MENU
+"$ADB" -s "$SERIAL" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+sleep 0.3
+digit_events=()
+for ((i = 0; i < ${#PIN}; i++)); do
+    digit_events+=( "KEYCODE_${PIN:i:1}" )
+done
+digit_events+=( KEYCODE_ENTER )
+"$ADB" -s "$SERIAL" shell input keyevent "${digit_events[@]}"
 sleep 0.5
-"$ADB" -s "$SERIAL" shell input text "$PIN"
-"$ADB" -s "$SERIAL" shell input keyevent KEYCODE_ENTER
 
 echo "[manual-emu] launching com.whoarewe.app..."
 "$ADB" -s "$SERIAL" shell am start -n com.whoarewe.app/.MainActivity >/dev/null

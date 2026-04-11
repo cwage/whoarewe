@@ -93,6 +93,19 @@ device_online() {
         | awk -v s="$serial" 'NR>1 && $1==s && $2=="device" {found=1} END {exit !found}'
 }
 
+# Host-side scratch files used by transfer_qr(). Tracked in an array so
+# the EXIT trap can sweep them on success *or* abort, without needing to
+# care which runs we completed.
+declare -a TMP_HOST_FILES=()
+
+cleanup_tmp_files() {
+    local f
+    for f in "${TMP_HOST_FILES[@]}"; do
+        [[ -f "$f" ]] && rm -f -- "$f"
+    done
+}
+trap cleanup_tmp_files EXIT
+
 # ─────────────────────────────────────────────────────────────────────────
 # 1. Resolve the phone serial
 # ─────────────────────────────────────────────────────────────────────────
@@ -111,6 +124,16 @@ if [[ -z "$PHONE" ]]; then
         exit 1
     fi
     PHONE="${candidates[0]}"
+fi
+# Validate whichever path set PHONE — auto-detect already restricts to
+# state=device, but an explicit --phone SERIAL could be a typo or an
+# unauthorised device that wouldn't be caught until a later adb call
+# failed with a less-specific error.
+if ! device_online "$PHONE"; then
+    echo "ERROR: phone '$PHONE' is not in adb state 'device'." >&2
+    echo "       Check the serial, the USB cable, and accept the" >&2
+    echo "       USB debugging prompt on the phone if one is pending." >&2
+    exit 1
 fi
 echo "[manual-pair] phone: $PHONE"
 
@@ -208,7 +231,14 @@ pause "Emulator identity created?"
 # ─────────────────────────────────────────────────────────────────────────
 transfer_qr() {
     local from=$1 to=$2 label=$3
-    local host_file="/tmp/manual-pair-${label}.png"
+    # Host-side screencap goes through a unique mktemp path so two runs
+    # in parallel (or a Ctrl+C mid-run followed by a retry) can't collide
+    # or leave confusing stale files. The EXIT trap above cleans up.
+    local host_file
+    host_file=$(mktemp "/tmp/manual-pair-${label}.XXXXXX.png")
+    TMP_HOST_FILES+=( "$host_file" )
+    # The on-device filename stays stable and human-readable so the user
+    # can match it against what the photo picker shows them.
     local remote_file="$SHOT_DIR/manual-pair-${label}.png"
     echo "[manual-pair] screencapping $from"
     "$ADB" -s "$from" exec-out screencap -p > "$host_file"
@@ -276,33 +306,57 @@ echo "── VERIFICATION: TOTP codes ──"
 read_code() {
     local serial=$1
     "$ADB" -s "$serial" shell uiautomator dump /sdcard/dump.xml > /dev/null
+    # `grep -o` exits 1 when no pattern is found, and under `set -o pipefail`
+    # that propagates through the pipeline and aborts the whole script via
+    # `set -e`. Wrap it in `|| true` so an empty dump just produces an empty
+    # string for the caller to handle via the explicit "could not scrape"
+    # branch below, instead of a less-helpful abrupt exit.
     "$ADB" -s "$serial" shell cat /sdcard/dump.xml \
-        | grep -oE 'text="[0-9]{3} [0-9]{3}"' \
+        | { grep -oE 'text="[0-9]{3} [0-9]{3}"' || true; } \
         | head -n1 \
         | sed 's/^text="//; s/"$//'
 }
 
-code_a=$(read_code "$A")
-code_b=$(read_code "$B")
+# Retry the read a few times before declaring a mismatch a real bug. The
+# TOTP window is 5 minutes (TotpGenerator.PERIOD_SECONDS = 300), so a true
+# window-boundary race is rare in the narrow gap between reading device A
+# and device B, but not impossible. Three attempts with a 1s sleep
+# eliminates it without papering over an actual failure — by the third
+# attempt we've definitely crossed the boundary and back.
+MAX_ATTEMPTS=3
+code_a=""
+code_b=""
+for (( attempt = 1; attempt <= MAX_ATTEMPTS; attempt++ )); do
+    code_a=$(read_code "$A")
+    code_b=$(read_code "$B")
 
-echo "  $A: '${code_a:-<not found>}'"
-echo "  $B: '${code_b:-<not found>}'"
-echo
+    echo "  $A: '${code_a:-<not found>}'"
+    echo "  $B: '${code_b:-<not found>}'"
+    echo
 
-if [[ -z "$code_a" || -z "$code_b" ]]; then
-    echo "RESULT: could not scrape a 6-digit code from one side."
-    echo "        Check the contact list manually — both devices should show"
-    echo "        a rotating 6-digit code, and the two should match."
-    exit 2
-fi
+    if [[ -z "$code_a" || -z "$code_b" ]]; then
+        echo "RESULT: could not scrape a 6-digit code from one side."
+        echo "        Check the contact list manually — both devices should show"
+        echo "        a rotating 6-digit code, and the two should match."
+        exit 2
+    fi
 
-if [[ "$code_a" == "$code_b" ]]; then
-    echo "RESULT: MATCH — both devices show '$code_a'"
-    exit 0
-else
-    echo "RESULT: MISMATCH — $A shows '$code_a', $B shows '$code_b'"
-    echo "        Codes are time-based, so a tiny race across a TOTP window"
-    echo "        boundary is possible. Re-run the read in a second if you"
-    echo "        think that's what happened; otherwise this is a real bug."
-    exit 1
-fi
+    if [[ "$code_a" == "$code_b" ]]; then
+        echo "RESULT: MATCH — both devices show '$code_a'"
+        exit 0
+    fi
+
+    if (( attempt < MAX_ATTEMPTS )); then
+        echo "MISMATCH on attempt $attempt ($A='$code_a' $B='$code_b')"
+        echo "Retrying in 1s — may be a TOTP window boundary race..."
+        echo
+        sleep 1
+    fi
+done
+
+echo "RESULT: MISMATCH after $MAX_ATTEMPTS attempts — $A='$code_a' $B='$code_b'"
+echo "        TOTP window boundary has been crossed during retries, so this"
+echo "        is not a timing race. This looks like a real pairing bug —"
+echo "        the two devices derived different shared secrets, or one is"
+echo "        reading from a different contact row than expected."
+exit 1
