@@ -146,6 +146,21 @@ Now repeat in reverse: screenshot the "Almost done" QR, ferry it to the first de
 
 Both devices should now show each other in the contact list, each with a rotating six-digit code. **The codes must match** between the two devices. If they don't, something is broken and we'd like to hear about it.
 
+## What to verify: screen capture protection
+
+Since cwage/whoarewe#22, the app window is `FLAG_SECURE` by default — the flag is set in `MainActivity.onCreate` before the first frame is composed — and is cleared only while the pair wizard is on **Show your code** / **Almost done** (the two steps that display the user's own QR, which must stay captureable for manual pairing). Everything else (Loading, Setup, contact list, Choose / Scan their code / Paired!) stays secure.
+
+`FLAG_SECURE` blocks the stock screenshot button, `MediaProjection` screen recorders, the task-switcher / recents thumbnail, and cast/mirror displays from capturing whatever the window is currently showing.
+
+Quick sanity checks on a real device:
+
+- On the **contact list**: press the screenshot button. On modern Pixels (API 33+) you still get a PNG file, but the app surface composites as solid black — only the system status bar at the top is visible, no TOTP codes. Older Android versions show a "Can't take screenshot due to app policy" toast instead. Either way, the codes are not in the capture.
+- Background the app from the contact list with the recents gesture — the WhoAreWe tile in the task switcher should render as blank / no readable code list.
+- In the pair wizard on **Show your code** / **Almost done** (ShowFirst / ShowAfterScan): the screenshot button must still work and capture a real QR image. Manual pairing relies on `adb exec-out screencap -p` working here (see `scripts/manual-pair.sh`'s `transfer_qr`). If these screens also screenshot as black, the predicate in `MainActivity` is inverted.
+- On **Setup** and **Choose / Scan their code / Paired!**: screenshot behavior is also secure (no secrets on those screens, but defaulting to secure and only exempting the QR screens is simpler and avoids any window where the flag is off by mistake).
+
+What this does **not** block: a camera pointed at the screen, accessibility-service text exfiltration (tracked separately in cwage/whoarewe#28), or a rooted adversary reading the framebuffer. `FLAG_SECURE` is a screen-capture defence, not a full confidentiality guarantee.
+
 ## Gotchas
 
 - **API 28 / 29 use the legacy Keystore auth path.** On those API levels `KeyManager` configures the key with `setUserAuthenticationValidityDurationSeconds(10)` instead of `setUserAuthenticationParameters`, which forces `cipher.init()` to run *after* `BiometricPrompt` has refreshed the auth window. The app handles this automatically — you don't have to do anything — but if something breaks in the keygen or AddContact path on an old emulator and works fine on API 30+, that's where to start looking. The legacy path is covered by the `pairing (28)` job in `.github/workflows/e2e.yml` and was historically broken (cwage/whoarewe#6, fixed in PR #10).

@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +37,7 @@ import com.whoarewe.app.crypto.QrDecoder
 import com.whoarewe.app.data.AppDatabase
 import com.whoarewe.app.data.Identity
 import com.whoarewe.app.ui.screens.ContactListScreen
+import com.whoarewe.app.ui.screens.PairStep
 import com.whoarewe.app.ui.screens.PairWizardScreen
 import com.whoarewe.app.ui.screens.SetupScreen
 import com.whoarewe.app.ui.theme.WhoAreWeTheme
@@ -183,6 +185,17 @@ class MainActivity : FragmentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Secure by default: set FLAG_SECURE before `setContent` so the very
+        // first frame the window composites is already blocked from screen
+        // capture, MediaProjection recorders, recents thumbnails, and cast
+        // displays. The LaunchedEffect below only *clears* the flag for the
+        // two pair-wizard steps that intentionally show the user's own QR
+        // (ShowFirst / ShowAfterScan). Previously the flag was only added
+        // from the LaunchedEffect, which left a composition-to-effect window
+        // where a MediaProjection recorder capturing continuously could
+        // sample frames of UiState.Main before the flag was applied. See
+        // cwage/whoarewe#22 (Copilot review, round 1).
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         handleE2eIntent(intent)
         setContent {
             WhoAreWeTheme {
@@ -193,6 +206,35 @@ class MainActivity : FragmentActivity() {
                     val viewModel: WhoAreWeViewModel = viewModel()
                     val uiState by viewModel.uiState.collectAsState()
                     val biometricRequest by viewModel.biometricRequest.collectAsState()
+
+                    // The window is FLAG_SECURE by default (set in onCreate).
+                    // We only *clear* the flag while the pair wizard is on
+                    // ShowFirst / ShowAfterScan, which intentionally display
+                    // the user's own QR — those screens must remain capturable
+                    // because manual pairing relies on `adb exec-out screencap
+                    // -p` working on them (see scripts/manual-pair.sh's
+                    // transfer_qr helper). Every other state — Loading, Setup,
+                    // and the rest of UiState.Main — stays secure.
+                    //
+                    // FLAG_SECURE is enforced by SurfaceFlinger so it blocks
+                    // the screenshot button, MediaProjection recorders, recents
+                    // thumbnails, and cast/mirror displays — but *not*
+                    // accessibility text reads (tracked separately in
+                    // cwage/whoarewe#28) or a camera pointed at the screen.
+                    // See cwage/whoarewe#22.
+                    val protectFromCapture = when (val state = uiState) {
+                        is UiState.Main ->
+                            state.pairStep !is PairStep.ShowFirst &&
+                                state.pairStep !is PairStep.ShowAfterScan
+                        else -> true
+                    }
+                    LaunchedEffect(protectFromCapture) {
+                        if (protectFromCapture) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        }
+                    }
 
                     val context = LocalContext.current
 
