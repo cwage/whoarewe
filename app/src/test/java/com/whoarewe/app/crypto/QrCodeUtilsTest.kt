@@ -86,4 +86,103 @@ class QrCodeUtilsTest {
         val enc2 = QrCodeUtils.encode(testName, key2)
         assert(enc1 != enc2)
     }
+
+    // ---- Display-name validation (cwage/whoarewe#26) ----
+
+    @Test
+    fun `decode accepts a name at the maximum length`() {
+        val maxName = "a".repeat(QrCodeUtils.MAX_DISPLAY_NAME_LENGTH)
+        val encoded = QrCodeUtils.encode(maxName, testKey)
+        val decoded = QrCodeUtils.decode(encoded)
+        assertNotNull(decoded)
+        assertEquals(maxName, decoded!!.displayName)
+    }
+
+    @Test
+    fun `decode rejects a name one character over the maximum length`() {
+        val tooLong = "a".repeat(QrCodeUtils.MAX_DISPLAY_NAME_LENGTH + 1)
+        val encoded = QrCodeUtils.encode(tooLong, testKey)
+        assertNull(
+            "A display name of length ${QrCodeUtils.MAX_DISPLAY_NAME_LENGTH + 1} must be rejected",
+            QrCodeUtils.decode(encoded)
+        )
+    }
+
+    @Test
+    fun `decode rejects a name with an embedded newline`() {
+        // Embedded \n is the "two visual rows from one contact" impersonation
+        // vector. Must be rejected so ContactListScreen cannot render the
+        // attacker's single trusted contact as two separate rows.
+        val encoded = QrCodeUtils.encode("Alice\nBob: 654321", testKey)
+        assertNull(QrCodeUtils.decode(encoded))
+    }
+
+    @Test
+    fun `decode rejects a name with an embedded carriage return`() {
+        val encoded = QrCodeUtils.encode("Alice\rBob", testKey)
+        assertNull(QrCodeUtils.decode(encoded))
+    }
+
+    @Test
+    fun `decode rejects a name with an embedded tab`() {
+        val encoded = QrCodeUtils.encode("Alice\tBob", testKey)
+        assertNull(QrCodeUtils.decode(encoded))
+    }
+
+    @Test
+    fun `decode rejects a name with a right-to-left override`() {
+        // U+202E is the classic homoglyph / direction-flip vector.
+        val encoded = QrCodeUtils.encode("Alice\u202EBob", testKey)
+        assertNull(QrCodeUtils.decode(encoded))
+    }
+
+    @Test
+    fun `decode rejects a name with a zero-width joiner`() {
+        // U+200D is category Cf (format). Kills the "invisible glyph" class.
+        val encoded = QrCodeUtils.encode("Ali\u200Dce", testKey)
+        assertNull(QrCodeUtils.decode(encoded))
+    }
+
+    @Test
+    fun `decode rejects a name with a null byte`() {
+        val encoded = QrCodeUtils.encode("Alice\u0000", testKey)
+        assertNull(QrCodeUtils.decode(encoded))
+    }
+
+    @Test
+    fun `decode NFC-normalizes combining characters to their precomposed form`() {
+        // "é" can be written as U+00E9 (precomposed) or U+0065 U+0301
+        // (e + combining acute accent). NFC collapses the latter to the
+        // former, so both devices should store the same bytes in Room
+        // regardless of which encoding the sender's keyboard produced.
+        val decomposed = "Al\u0065\u0301x"  // "Aléx" via combining accent
+        val precomposed = "Al\u00E9x"       // "Aléx" via precomposed é
+        val encoded = QrCodeUtils.encode(decomposed, testKey)
+        val decoded = QrCodeUtils.decode(encoded)
+        assertNotNull(decoded)
+        assertEquals(precomposed, decoded!!.displayName)
+    }
+
+    @Test
+    fun `decode trims leading and trailing whitespace`() {
+        val encoded = QrCodeUtils.encode("  alice  ", testKey)
+        val decoded = QrCodeUtils.decode(encoded)
+        assertNotNull(decoded)
+        assertEquals("alice", decoded!!.displayName)
+    }
+
+    @Test
+    fun `decode rejects a whitespace-only name`() {
+        val encoded = QrCodeUtils.encode("   ", testKey)
+        assertNull(QrCodeUtils.decode(encoded))
+    }
+
+    @Test
+    fun `decode accepts a plain Unicode name`() {
+        // Non-ASCII letters are fine — only Cc/Cf are blocked.
+        val encoded = QrCodeUtils.encode("Åsa Bäck", testKey)
+        val decoded = QrCodeUtils.decode(encoded)
+        assertNotNull(decoded)
+        assertEquals("Åsa Bäck", decoded!!.displayName)
+    }
 }
