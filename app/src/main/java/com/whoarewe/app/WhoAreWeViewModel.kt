@@ -491,7 +491,16 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
         activeCipher: Cipher,
         replaceId: Long?
     ) {
-        withContext(Dispatchers.IO) {
+        // The wizard-advance step below uses the same effective display name
+        // that actually got written to the DAO, not the raw payload name.
+        // On Replace we deliberately preserve the existing row's name so
+        // that a hostile QR cannot silently reformat the label the user
+        // sees — and the pair-wizard confirmation screen is part of that
+        // "label the user sees", so it has to be sourced from the same
+        // variable as the stored row. Captured as the return value of
+        // `withContext` so it's visible at the wizard-advance site below.
+        // See Copilot round 2 on PR #37.
+        val effectiveDisplayName = withContext(Dispatchers.IO) {
             // Fetch the existing row up front (if any) so we can preserve
             // its user-owned fields on the replacement. The private key
             // decryption and ECDH derivation still happen *after* this
@@ -507,8 +516,9 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                 )
                 val pubKeyHex = HexCodec.bytesToHex(payload.publicKey)
                 val secretHex = HexCodec.bytesToHex(sharedSecret)
+                val storedName = existingRow?.displayName ?: payload.displayName
                 val contact = TrustedContact(
-                    displayName = existingRow?.displayName ?: payload.displayName,
+                    displayName = storedName,
                     publicKey = pubKeyHex,
                     totpSecret = secretHex,
                     notes = existingRow?.notes
@@ -519,6 +529,7 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                     dao.insertContact(contact)
                 }
                 sharedSecret.fill(0)
+                storedName
             } finally {
                 ourPrivateKey.fill(0)
             }
@@ -526,7 +537,7 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
         // Advance wizard: show our QR so they can scan us
         val tag = if (replaceId != null) "ReplaceContact" else "AddContact"
         Log.d("WhoAreWe", "$tag complete, advancing to ShowAfterScan")
-        _pairStep.value = PairStep.ShowAfterScan(payload.displayName)
+        _pairStep.value = PairStep.ShowAfterScan(effectiveDisplayName)
         Log.d("WhoAreWe", "pairStep is now: ${_pairStep.value}")
     }
 
