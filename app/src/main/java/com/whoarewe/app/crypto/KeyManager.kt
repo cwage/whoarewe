@@ -41,13 +41,16 @@ class KeyManager(private val context: Context) {
     }
 
     fun getPublicKeyHex(): String? {
-        return getPublicKeyBytes()?.joinToString("") { "%02x".format(it) }
+        return getPublicKeyBytes()?.let { HexCodec.bytesToHex(it) }
     }
 
     fun getFingerprint(): String? {
         val pubKey = getPublicKeyBytes() ?: return null
         val hash = MessageDigest.getInstance("SHA-256").digest(pubKey)
-        return hash.take(8).joinToString(":") { "%02X".format(it) }
+        // Format the leading 8 bytes as colon-separated uppercase hex pairs
+        // (e.g. "A1:B2:C3:..."). Encode through HexCodec to keep all hex
+        // conversion routed through one place.
+        return HexCodec.bytesToHex(hash.copyOfRange(0, 8)).uppercase().chunked(2).joinToString(":")
     }
 
     fun isBiometricAvailable(): Boolean {

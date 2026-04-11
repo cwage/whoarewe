@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.whoarewe.app.crypto.EcdhExchange
+import com.whoarewe.app.crypto.HexCodec
 import com.whoarewe.app.crypto.KeyManager
 import com.whoarewe.app.crypto.QrCodeUtils
 import com.whoarewe.app.crypto.TotpGenerator
@@ -110,7 +111,7 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                     if (state is UiState.Main) {
                         // Regenerate codes every tick
                         val contacts = state.contacts.map { cwc ->
-                            val secret = hexToBytes(cwc.contact.totpSecret)
+                            val secret = HexCodec.hexToBytes(cwc.contact.totpSecret)
                             cwc.copy(code = TotpGenerator.generateCode(secret, now))
                         }
                         _uiState.value = state.copy(
@@ -128,7 +129,7 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
             dao.getAllContacts().combine(_pairStep) { contacts, pairStep ->
                 val now = System.currentTimeMillis()
                 val withCodes = contacts.map { contact ->
-                    val secret = hexToBytes(contact.totpSecret)
+                    val secret = HexCodec.hexToBytes(contact.totpSecret)
                     ContactWithCode(
                         contact = contact,
                         code = TotpGenerator.generateCode(secret, now)
@@ -206,9 +207,7 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
 
         // Check if we already have this contact
         viewModelScope.launch {
-            val existing = dao.getContactByPublicKey(
-                payload.publicKey.joinToString("") { "%02x".format(it) }
-            )
+            val existing = dao.getContactByPublicKey(HexCodec.bytesToHex(payload.publicKey))
             if (existing != null) {
                 Log.d("WhoAreWe", "onQrScanned: contact already exists")
                 val state = _uiState.value
@@ -299,12 +298,8 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                                     ourPrivateKey,
                                     payload.publicKey
                                 )
-                                val pubKeyHex = payload.publicKey.joinToString("") {
-                                    "%02x".format(it)
-                                }
-                                val secretHex = sharedSecret.joinToString("") {
-                                    "%02x".format(it)
-                                }
+                                val pubKeyHex = HexCodec.bytesToHex(payload.publicKey)
+                                val secretHex = HexCodec.bytesToHex(sharedSecret)
                                 val contact = TrustedContact(
                                     displayName = payload.displayName,
                                     publicKey = pubKeyHex,
@@ -367,10 +362,6 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
             is UiState.Setup -> _uiState.value = state.copy(isGenerating = false)
             else -> {}
         }
-    }
-
-    private fun hexToBytes(hex: String): ByteArray {
-        return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
 
     /**

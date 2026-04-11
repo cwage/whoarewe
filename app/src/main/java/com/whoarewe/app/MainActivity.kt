@@ -29,6 +29,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import com.whoarewe.app.crypto.HexCodec
 import com.whoarewe.app.crypto.KeyManager
 import com.whoarewe.app.crypto.QrCodeUtils
 import com.whoarewe.app.crypto.QrDecoder
@@ -171,15 +172,9 @@ class MainActivity : FragmentActivity() {
 
         keyManager.e2eWriteIdentityFilesForTest(publicKey)
 
-        // NOTE: the `joinToString { "%02x".format(it) }` byte→hex pattern
-        // below is buggy for bytes >= 0x80 (sign-extension), but it matches
-        // the same pattern used elsewhere in production code paths so the
-        // dedup lookup `getContactByPublicKey` still finds this row. Fixing
-        // it requires fixing all call sites at once. Tracked as
-        // cwage/whoarewe#15.
         val identity = Identity(
             displayName = trimmedName,
-            publicKey = publicKey.joinToString("") { "%02x".format(it) }
+            publicKey = HexCodec.bytesToHex(publicKey)
         )
         dao.saveIdentity(identity)
 

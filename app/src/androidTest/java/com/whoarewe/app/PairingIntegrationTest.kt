@@ -5,6 +5,7 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.whoarewe.app.crypto.EcdhExchange
+import com.whoarewe.app.crypto.HexCodec
 import com.whoarewe.app.crypto.QrCodeUtils
 import com.whoarewe.app.crypto.TotpGenerator
 import com.whoarewe.app.data.AppDatabase
@@ -261,6 +262,6 @@ class PairingIntegrationTest {
 
     // ── Helpers ──
 
-    private fun ByteArray.toHex(): String = joinToString("") { "%02x".format(it) }
-    private fun String.hexToBytes(): ByteArray = chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    private fun ByteArray.toHex(): String = HexCodec.bytesToHex(this)
+    private fun String.hexToBytes(): ByteArray = HexCodec.hexToBytes(this)
 }
