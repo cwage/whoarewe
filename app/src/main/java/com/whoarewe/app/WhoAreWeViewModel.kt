@@ -203,6 +203,18 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
             }
             return
         }
+        // Reject non-canonical / off-curve / identity Ed25519 public keys
+        // *before* requesting a biometric unlock — otherwise a hostile QR
+        // would cost the user an auth prompt just to fail inside
+        // EcdhExchange.deriveSharedSecret. See cwage/whoarewe#21.
+        if (!EcdhExchange.isValidEd25519PublicKey(payload.publicKey)) {
+            Log.d("WhoAreWe", "onQrScanned: public key failed Ed25519 validation")
+            val state = _uiState.value
+            if (state is UiState.Main) {
+                _uiState.value = state.copy(error = "Invalid QR code")
+            }
+            return
+        }
         Log.d("WhoAreWe", "onQrScanned: decoded ${payload.displayName}")
 
         // Check if we already have this contact
@@ -317,6 +329,13 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                         Log.d("WhoAreWe", "pairStep is now: ${_pairStep.value}")
                     }
                 }
+            } catch (e: EcdhExchange.InvalidPublicKeyException) {
+                // Defence in depth: onQrScanned already rejects invalid public
+                // keys, so this should be unreachable. Surface as the same
+                // snackbar string rather than a raw JCA message if it ever
+                // fires. See cwage/whoarewe#21.
+                Log.e("WhoAreWe", "ECDH rejected peer public key post-auth", e)
+                onBiometricError("Invalid QR code")
             } catch (e: Exception) {
                 Log.e("WhoAreWe", "Biometric operation failed", e)
                 onBiometricError(e.message ?: "Operation failed")
