@@ -5,10 +5,20 @@ import android.graphics.Color
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.qrcode.QRCodeWriter
+import java.text.Normalizer
 
 object QrCodeUtils {
     private const val SCHEME = "whoarewe"
     private const val VERSION = "v1"
+
+    /**
+     * Maximum accepted display-name length in Java code units, measured
+     * *after* NFC normalization and trimming. 64 is a comfortable ceiling
+     * for any human name and caps the row-overflow / DB-bloat surface
+     * described in cwage/whoarewe#26 well below ZXing's Version 40 QR
+     * capacity (~2900 alphanumeric chars).
+     */
+    const val MAX_DISPLAY_NAME_LENGTH = 64
 
     data class QrPayload(
         val displayName: String,
@@ -41,12 +51,58 @@ object QrCodeUtils {
         } catch (e: IllegalArgumentException) {
             return null
         }
-
-        val displayName = parts[3]
-        if (displayName.isBlank()) return null
         if (publicKey.size != 32) return null // Ed25519 public key is 32 bytes
 
+        val displayName = sanitizeDisplayName(parts[3]) ?: return null
+
         return QrPayload(displayName = displayName, publicKey = publicKey)
+    }
+
+    /**
+     * Normalize and validate a display name pulled from a scanned QR. Returns
+     * the cleaned name, or null if the input should be rejected. See
+     * cwage/whoarewe#26 for the full exposure list; the short version:
+     *
+     *  - **NFC normalize first**, so two devices that type the same name with
+     *    different combining-character sequences store the same bytes.
+     *  - **Trim** leading/trailing whitespace, matching the local-identity
+     *    setup flow (`WhoAreWeViewModel.requestGenerateIdentity`).
+     *  - **Reject empty** (after trim) — an empty name is not a name.
+     *  - **Reject > [MAX_DISPLAY_NAME_LENGTH] code units** to bound row
+     *    overflow and DB bloat from a maximal-capacity QR.
+     *  - **Reject Unicode Cc / Cf / Zl / Zp** codepoints. This kills
+     *    embedded newlines / tabs (the "two rows rendered from one contact"
+     *    impersonation trick) via Cc, the `\u202E` RTL-override homoglyph
+     *    vector and zero-width joiners via Cf, and the Unicode newline-
+     *    equivalents `U+2028` / `U+2029` via Zl / Zp — all print-unsafe
+     *    for a trust-anchor label. We deliberately do *not* reject Zs
+     *    (space separators) because regular space `U+0020` is Zs and
+     *    "Alice Smith" is a legitimate display name.
+     *
+     * Iterates by codepoint so astral-plane characters are handled correctly
+     * (a single emoji is one codepoint but two Java code units; the rejected
+     * categories all live in the BMP today but codepoint iteration is the
+     * correct shape regardless).
+     */
+    private fun sanitizeDisplayName(raw: String): String? {
+        val normalized = Normalizer.normalize(raw, Normalizer.Form.NFC).trim()
+        if (normalized.isEmpty()) return null
+        if (normalized.length > MAX_DISPLAY_NAME_LENGTH) return null
+
+        var i = 0
+        while (i < normalized.length) {
+            val cp = normalized.codePointAt(i)
+            val type = Character.getType(cp)
+            if (type == Character.CONTROL.toInt() ||
+                type == Character.FORMAT.toInt() ||
+                type == Character.LINE_SEPARATOR.toInt() ||
+                type == Character.PARAGRAPH_SEPARATOR.toInt()
+            ) {
+                return null
+            }
+            i += Character.charCount(cp)
+        }
+        return normalized
     }
 
     fun generateBitmap(content: String, size: Int = 512): Bitmap {

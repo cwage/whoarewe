@@ -193,7 +193,11 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun onQrScanned(rawData: String) {
-        Log.d("WhoAreWe", "onQrScanned: $rawData")
+        // Deliberately do NOT log `rawData` — it's attacker-controlled and
+        // carries the pre-validation display name, which could contain
+        // embedded newlines + forged log-line prefixes (cwage/whoarewe#26).
+        // The post-decode log below uses the sanitized name instead.
+        Log.d("WhoAreWe", "onQrScanned")
         val payload = QrCodeUtils.decode(rawData)
         if (payload == null) {
             Log.d("WhoAreWe", "onQrScanned: invalid QR payload")
