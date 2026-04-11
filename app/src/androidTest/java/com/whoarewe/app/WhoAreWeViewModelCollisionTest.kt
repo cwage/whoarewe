@@ -22,6 +22,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -141,6 +142,48 @@ class WhoAreWeViewModelCollisionTest {
             pending.incoming.publicKey
         )
         assertEquals("Alice", pending.incoming.displayName)
+    }
+
+    @Test
+    fun onQrScanned_withMultipleMatchingNames_deterministicallyTargetsLowestId() = runBlocking {
+        // When the user has previously accepted "Add as a second <name>",
+        // two existing rows can legitimately share a display name. A third
+        // scan of the same name with yet another key must still produce a
+        // deterministic collision target — specifically the lowest-id
+        // (oldest) matching row — rather than something dependent on the
+        // SQLite tiebreaker for `ORDER BY displayName`, which is
+        // implementation-defined and would make the Replace branch swap
+        // "whichever Alice came back first in this query." Pinning the
+        // oldest-wins policy here so a refactor that reintroduces
+        // `firstOrNull` on the Flow list fires this test. See Copilot
+        // round 1 on PR #37.
+        val firstKey = generateEd25519PublicKey()
+        val firstId = seedContact("Alice", firstKey)
+        val secondKey = generateEd25519PublicKey()
+        val secondId = seedContact("Alice", secondKey)
+        // Sanity: the two auto-generated ids are ordered the way Room
+        // normally hands them out, so "lowest id = oldest" is a real
+        // policy here and not a definition-by-accident.
+        assertTrue(
+            "Precondition: the second insertion must receive a higher id than the first",
+            secondId > firstId
+        )
+
+        val attackerKey = generateEd25519PublicKey()
+        val attackerQr = QrCodeUtils.encode("Alice", attackerKey)
+
+        val vm = makeVm()
+        scan(vm, attackerQr)
+
+        val pending = withTimeout(5_000) {
+            vm.pendingNameCollision.first { it != null }
+        }!!
+
+        assertEquals(
+            "Multi-match collision target must be the oldest (lowest-id) matching row",
+            firstId,
+            pending.existing.id
+        )
     }
 
     @Test

@@ -13,11 +13,24 @@
 #   export KVM_GID=$(getent group kvm | cut -d: -f3)
 #   docker compose run --rm androidtest scripts/local-instrumented.sh
 #
-# Optional: pass a fully-qualified class filter as arg 1 to scope the run,
-# e.g.
-#   docker compose run --rm androidtest scripts/local-instrumented.sh \
-#       com.whoarewe.app.WhoAreWeViewModelCollisionTest
-# Anything after the first arg is forwarded to gradle verbatim.
+# Optional flags:
+#   --class FQCN    Scope the run to a single test class. The FQCN is
+#                   forwarded to gradle as
+#                   `-Pandroid.testInstrumentationRunnerArguments.class=FQCN`.
+#                   Can be repeated or replaced with `--class pkg1,pkg2.Foo`
+#                   for multi-class filters — AGP accepts a comma-joined list.
+#   --              Explicit end-of-options; everything after is passed to
+#                   gradle verbatim. Not strictly required (any unrecognised
+#                   arg already flows through) but documented so
+#                   `scripts/local-instrumented.sh -- --info --stacktrace`
+#                   reads as you'd expect.
+#
+# Any argument not consumed by the flags above is forwarded to gradle
+# unchanged, which means you can drop `--info` / `--stacktrace` / similar
+# gradle flags without also providing a `--class`. The original (v1)
+# convention of "first positional = class filter" was ambiguous — passing
+# just `--info` would previously be interpreted as a class name and fail
+# the run. See Copilot round 1 on PR #37.
 #
 # The boot sequence is deliberately duplicated from local-maestro.sh rather
 # than sourced — sourcing a bash script that invokes `exit`/`trap` for its
@@ -134,15 +147,43 @@ adb -s "${EMULATOR_SERIAL}" shell locksettings set-pin "${PIN}" >/dev/null
 # ── gradle connectedDebugAndroidTest ────────────────────────────────────────
 
 # `connectedDebugAndroidTest` handles APK install + test APK install + test
-# execution itself, so we don't duplicate that here. A class filter can be
-# passed as the first argument; everything after is forwarded verbatim so
-# callers can add e.g. `--info` or `--stacktrace`.
+# execution itself, so we don't duplicate that here. Args are parsed as:
+#   --class FQCN  → `-Pandroid.testInstrumentationRunnerArguments.class=FQCN`
+#   --            → end-of-options, everything after is passed to gradle
+#   (anything)    → passed to gradle verbatim
+# This lets you scope to a test class, pass gradle flags, or both, without
+# the v1 ambiguity where the first positional was unconditionally taken as
+# a class filter.
 
+class_filter=""
 gradle_args=()
-if [[ $# -gt 0 ]]; then
-    gradle_args+=("-Pandroid.testInstrumentationRunnerArguments.class=$1")
-    shift
-    gradle_args+=("$@")
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --class)
+            if [[ $# -lt 2 ]]; then
+                echo "ERROR: --class requires a fully-qualified class name argument" >&2
+                exit 1
+            fi
+            class_filter="$2"
+            shift 2
+            ;;
+        --)
+            shift
+            gradle_args+=("$@")
+            break
+            ;;
+        *)
+            gradle_args+=("$1")
+            shift
+            ;;
+    esac
+done
+
+if [[ -n "${class_filter}" ]]; then
+    gradle_args=(
+        "-Pandroid.testInstrumentationRunnerArguments.class=${class_filter}"
+        "${gradle_args[@]}"
+    )
 fi
 
 log "Running ./gradlew :app:connectedDebugAndroidTest ${gradle_args[*]:-}"

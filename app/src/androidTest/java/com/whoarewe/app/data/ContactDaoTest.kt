@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -156,9 +157,17 @@ class ContactDaoTest {
         val newAlice = all.first { it.displayName == "Alice" }
         assertEquals("newkey", newAlice.publicKey)
         assertEquals("newsecret", newAlice.totpSecret)
-        assert(newAlice.id != oldAliceId) {
-            "replaceContact must insert a brand-new row, not reuse the old id"
-        }
+        // Use assertNotEquals rather than Kotlin/Java `assert(...)` because
+        // JVM assertions are compiled in but disabled at runtime unless the
+        // instrumentation runner is launched with `-ea`, and our runner
+        // isn't — so `assert(...)` would silently become a no-op and this
+        // "the new row has a fresh auto-generated id" invariant would be
+        // unenforced. See Copilot round 1 on PR #37.
+        assertNotEquals(
+            "replaceContact must insert a brand-new row, not reuse the old id",
+            oldAliceId,
+            newAlice.id
+        )
 
         // Bob is untouched.
         val bob = dao.getContactById(bobId)

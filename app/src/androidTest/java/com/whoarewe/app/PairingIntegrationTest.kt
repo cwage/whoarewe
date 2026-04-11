@@ -21,6 +21,7 @@ import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
@@ -274,9 +275,15 @@ class PairingIntegrationTest {
         }
         assertNotNull("Name-based collision check must catch the attacker's QR", byName)
         assertEquals("Alice", byName!!.displayName)
-        assert(byName.publicKey != decoded.publicKey.toHex()) {
-            "Collided row must have a different key from the incoming payload"
-        }
+        // assertNotEquals, not Kotlin/Java `assert(...)` — the latter is
+        // a runtime-disabled no-op unless the instrumentation runner is
+        // launched with `-ea`, which ours is not. See Copilot round 1
+        // on PR #37.
+        assertNotEquals(
+            "Collided row must have a different key from the incoming payload",
+            decoded.publicKey.toHex(),
+            byName.publicKey
+        )
     }
 
     @Test
@@ -332,6 +339,84 @@ class PairingIntegrationTest {
             "Bob must be untouched by the replace",
             bobPublic.toHex(),
             all.first { it.displayName == "Bob" }.publicKey
+        )
+    }
+
+    @Test
+    fun nameCollision_replacePath_preservesExistingNotesAndDisplayNameCasing() = runTest {
+        // Pin the "continuity of the user's view" contract for Replace
+        // that `persistPairedContact` implements (cwage/whoarewe#33,
+        // Copilot round 1). When the user says "this is still the same
+        // person with a new key":
+        //   - the label they're used to seeing ("Alice") must survive,
+        //     even if the attacker's QR typed "alice" with a different
+        //     casing — preserving existing.displayName is the only way
+        //     to avoid letting a hostile QR silently reformat a trusted
+        //     contact's label out from under the user,
+        //   - and any annotation the user has ("my sister") must
+        //     survive because it's user-owned metadata, not identity
+        //     material.
+        // Only the publicKey and totpSecret should actually change.
+        //
+        // This test mirrors the exact shape of the `existingRow`-aware
+        // TrustedContact construction in `persistPairedContact`. If a
+        // future refactor drops those preserved fields, this test fires
+        // even though the VM-level glue is not directly invoked.
+        val (_, oldAlicePublic) = generateEd25519KeyPair()
+        val oldAliceId = dao.insertContact(
+            TrustedContact(
+                displayName = "Alice",
+                publicKey = oldAlicePublic.toHex(),
+                totpSecret = "oldalicesecret",
+                notes = "my sister"
+            )
+        )
+
+        // Incoming QR has the same name with *different* casing to make
+        // the "did we preserve the existing casing?" assertion non-trivial.
+        val (victimPrivate, _) = generateEd25519KeyPair()
+        val (_, newAlicePublic) = generateEd25519KeyPair()
+        val attackerPayload = QrCodeUtils.decode(
+            QrCodeUtils.encode("alice", newAlicePublic)
+        )!!
+        val newSecret = EcdhExchange.deriveSharedSecret(victimPrivate, attackerPayload.publicKey)
+
+        // Build the replacement the same way persistPairedContact does
+        // when replaceId != null: load the old row, carry displayName
+        // and notes from it, swap in the new key and derived secret.
+        val existingRow = dao.getContactById(oldAliceId)!!
+        dao.replaceContact(
+            oldAliceId,
+            TrustedContact(
+                displayName = existingRow.displayName,
+                publicKey = attackerPayload.publicKey.toHex(),
+                totpSecret = newSecret.toHex(),
+                notes = existingRow.notes
+            )
+        )
+
+        val all = dao.getAllContacts().first()
+        assertEquals(1, all.size)
+        val replaced = all[0]
+        assertEquals(
+            "displayName must keep the existing casing, not adopt the scanned 'alice'",
+            "Alice",
+            replaced.displayName
+        )
+        assertEquals(
+            "notes (user-owned annotation) must survive the identity swap",
+            "my sister",
+            replaced.notes
+        )
+        assertEquals(
+            "publicKey must be the freshly-paired one",
+            attackerPayload.publicKey.toHex(),
+            replaced.publicKey
+        )
+        assertEquals(
+            "totpSecret must be the freshly-derived ECDH output",
+            newSecret.toHex(),
+            replaced.totpSecret
         )
     }
 

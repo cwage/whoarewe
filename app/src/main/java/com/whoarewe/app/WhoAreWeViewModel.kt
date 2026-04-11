@@ -273,11 +273,36 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
             // name matches must be a *different* cryptographic identity. Do
             // not proceed silently — surface the collision so the user can
             // explicitly choose Replace / Add-as-second / Cancel.
-            val nameCollision = dao.getAllContacts().first().firstOrNull { row ->
+            //
+            // More than one existing contact may legitimately share a display
+            // name — that's precisely the "Add as a second" flow below. When
+            // we hit that case we must *not* rely on `getAllContacts()` row
+            // order: the query is `ORDER BY displayName ASC`, and SQLite's
+            // tiebreaker for equal keys is implementation-defined, so
+            // `firstOrNull` against that list would hand Replace an
+            // effectively arbitrary target and could swap the wrong Alice.
+            // Instead, collect every match and pick deterministically by the
+            // lowest row id — i.e. the *oldest* matching contact — and log
+            // loudly when there's more than one so the behaviour is audit-
+            // able after the fact. A richer UX (let the user pick which one
+            // to replace) would be a follow-up; this PR closes the "silent
+            // impersonation" gap and this suffices for the deterministic
+            // part. See Copilot round 1 on PR #37.
+            val matchingNameCollisions = dao.getAllContacts().first().filter { row ->
                 NameMatcher.matches(row.displayName, payload.displayName)
             }
+            val nameCollision = matchingNameCollisions.minByOrNull { it.id }
             if (nameCollision != null) {
-                Log.d("WhoAreWe", "onQrScanned: name collides with existing contact id=${nameCollision.id}")
+                if (matchingNameCollisions.size > 1) {
+                    Log.w(
+                        "WhoAreWe",
+                        "onQrScanned: ${matchingNameCollisions.size} contacts match " +
+                            "\"${payload.displayName}\"; targeting oldest id=${nameCollision.id} " +
+                            "for Replace (other rows untouched)"
+                    )
+                } else {
+                    Log.d("WhoAreWe", "onQrScanned: name collides with existing contact id=${nameCollision.id}")
+                }
                 _pendingNameCollision.value = PendingNameCollision(
                     existing = nameCollision,
                     incoming = payload
@@ -286,7 +311,10 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
             }
 
             Log.d("WhoAreWe", "onQrScanned: requesting biometric for ECDH")
-            requestBiometricForContact(BiometricPurpose.AddContact(payload), payload.displayName)
+            requestBiometricForContact(
+                BiometricPurpose.AddContact(payload),
+                "Authenticate to add ${payload.displayName}"
+            )
         }
     }
 
@@ -296,8 +324,14 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
      * [confirmReplaceContact], and the Add-as-second branch of
      * [confirmAddAsSecondContact]. Handles the legacy-auth cipher-deferral
      * (see `KeyManager.usesLegacyAuth()`) identically in all three call sites.
+     *
+     * [subtitle] is passed fully-formed by the caller rather than built from
+     * the purpose here — that keeps the helper purpose-agnostic and makes it
+     * impossible for a future branch to fall through with the wrong verb
+     * (Replace showing "Authenticate to add …" was the exact bug Copilot
+     * caught on PR #37 round 1).
      */
-    private fun requestBiometricForContact(purpose: BiometricPurpose, subtitleName: String) {
+    private fun requestBiometricForContact(purpose: BiometricPurpose, subtitle: String) {
         // Need biometric to decrypt our private key for ECDH. On API ≥ R
         // we init the cipher up front; on legacy we defer to post-auth.
         try {
@@ -305,7 +339,7 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
             _biometricRequest.value = BiometricRequest(
                 cipher = cipher,
                 purpose = purpose,
-                subtitle = "Authenticate to add $subtitleName"
+                subtitle = subtitle
             )
         } catch (e: Exception) {
             Log.e("WhoAreWe", "Failed to get cipher for ECDH", e)
@@ -330,7 +364,7 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                 oldContactId = pending.existing.id,
                 payload = pending.incoming
             ),
-            pending.incoming.displayName
+            "Authenticate to replace ${pending.existing.displayName}"
         )
     }
 
@@ -344,7 +378,7 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
         _pendingNameCollision.value = null
         requestBiometricForContact(
             BiometricPurpose.AddContact(pending.incoming),
-            pending.incoming.displayName
+            "Authenticate to add a second ${pending.existing.displayName}"
         )
     }
 
@@ -440,6 +474,17 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
      * pair wizard. When [replaceId] is null this inserts a new row; when
      * non-null it calls the DAO's atomic `replaceContact` so the swap happens
      * inside a single Room transaction (see cwage/whoarewe#33).
+     *
+     * On the Replace path we carry the **existing row's `displayName` and
+     * `notes`** onto the replacement row. The user's view of the contact
+     * has continuity — "Alice is still Alice, she just has a new key" —
+     * so any annotation they had ("my sister") must survive and the label
+     * they're used to seeing must not flip casing just because the
+     * incoming QR was typed differently. If the existing row disappeared
+     * between the collision dialog and the user confirming Replace (stale
+     * id), we fall back to the incoming payload's name and drop notes —
+     * the same shape the ContactDao's stale-id defensive test pins.
+     * See Copilot round 1 on PR #37.
      */
     private suspend fun persistPairedContact(
         payload: QrCodeUtils.QrPayload,
@@ -447,6 +492,13 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
         replaceId: Long?
     ) {
         withContext(Dispatchers.IO) {
+            // Fetch the existing row up front (if any) so we can preserve
+            // its user-owned fields on the replacement. The private key
+            // decryption and ECDH derivation still happen *after* this
+            // lookup — if the row is gone, we just proceed as an insert-
+            // shaped write, matching the stale-id fallback policy.
+            val existingRow = replaceId?.let { dao.getContactById(it) }
+
             val ourPrivateKey = keyManager.decryptPrivateKey(activeCipher)
             try {
                 val sharedSecret = EcdhExchange.deriveSharedSecret(
@@ -456,9 +508,10 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                 val pubKeyHex = HexCodec.bytesToHex(payload.publicKey)
                 val secretHex = HexCodec.bytesToHex(sharedSecret)
                 val contact = TrustedContact(
-                    displayName = payload.displayName,
+                    displayName = existingRow?.displayName ?: payload.displayName,
                     publicKey = pubKeyHex,
-                    totpSecret = secretHex
+                    totpSecret = secretHex,
+                    notes = existingRow?.notes
                 )
                 if (replaceId != null) {
                     dao.replaceContact(replaceId, contact)
