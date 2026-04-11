@@ -116,7 +116,7 @@ if [[ -z "$PHONE" ]]; then
     )
     if [[ ${#candidates[@]} -eq 0 ]]; then
         echo "ERROR: no USB phone detected. Plug in a device (with USB" >&2
-        echo "       debugging authorised) or pass --phone SERIAL."       >&2
+        echo "       debugging authorized) or pass --phone SERIAL."       >&2
         exit 1
     elif [[ ${#candidates[@]} -gt 1 ]]; then
         echo "ERROR: multiple USB devices attached: ${candidates[*]}" >&2
@@ -127,7 +127,7 @@ if [[ -z "$PHONE" ]]; then
 fi
 # Validate whichever path set PHONE — auto-detect already restricts to
 # state=device, but an explicit --phone SERIAL could be a typo or an
-# unauthorised device that wouldn't be caught until a later adb call
+# unauthorized device that wouldn't be caught until a later adb call
 # failed with a less-specific error.
 if ! device_online "$PHONE"; then
     echo "ERROR: phone '$PHONE' is not in adb state 'device'." >&2
