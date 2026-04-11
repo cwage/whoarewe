@@ -54,9 +54,14 @@ WORKDIR /project
 ENV GRADLE_USER_HOME=/gradle-cache
 RUN mkdir -p /gradle-cache && chmod 777 /gradle-cache
 
-# Android SDK needs a writable home for analytics/settings
+# Android SDK needs a writable home for analytics/settings. Recursive
+# chmod because subsequent `sdkmanager` invocations below run as root
+# and create `/tmp/.android/cache` as 755 root-owned, which a non-root
+# container user then cannot write to when Gradle tries to cache the
+# remote SDK manifests (`/tmp/.android/cache/sdkbin-*`) during
+# `connectedDebugAndroidTest`. See KeyManager / #32 PR notes.
 ENV ANDROID_USER_HOME=/tmp/.android
-RUN mkdir -p /tmp/.android && chmod 777 /tmp/.android
+RUN mkdir -p /tmp/.android/cache && chmod -R 777 /tmp/.android
 
 # Make SDK writable so Gradle can auto-install missing components
 RUN chmod -R a+w ${ANDROID_HOME}
@@ -94,7 +99,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN sdkmanager \
     "emulator" \
     "system-images;android-28;default;x86_64" && \
-    chmod -R a+w ${ANDROID_HOME}
+    chmod -R a+w ${ANDROID_HOME} && \
+    chmod -R 777 /tmp/.android
 
 # Maestro CLI. Pulled directly from the github release so the installed
 # version is reproducible from this Dockerfile alone (no curl|bash, no

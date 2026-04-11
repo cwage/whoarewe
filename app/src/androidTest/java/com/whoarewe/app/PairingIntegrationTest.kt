@@ -8,6 +8,7 @@ import com.whoarewe.app.crypto.EcdhExchange
 import com.whoarewe.app.crypto.HexCodec
 import com.whoarewe.app.crypto.QrCodeUtils
 import com.whoarewe.app.crypto.TotpGenerator
+import com.whoarewe.app.crypto.TotpSecretCodec
 import com.whoarewe.app.data.AppDatabase
 import com.whoarewe.app.data.Identity
 import com.whoarewe.app.data.NameMatcher
@@ -43,6 +44,49 @@ class PairingIntegrationTest {
 
     private lateinit var db: AppDatabase
     private lateinit var dao: com.whoarewe.app.data.ContactDao
+
+    // Per-test DEK — a real app would read this out of the biometric-
+    // wrapped identity blob at unlock time. For DAO-level integration
+    // tests we just hold it in-memory alongside the in-memory DB.
+    private val testDek = ByteArray(32) { it.toByte() }
+
+    /**
+     * Build a [TrustedContact] carrying an encrypted version of
+     * [plaintextSecret]. The caller keeps the plaintext so assertions
+     * can re-encrypt or re-decrypt and compare against what the DAO
+     * round-tripped. This mirrors the shape of what
+     * `WhoAreWeViewModel.persistPairedContact` writes at pair time.
+     */
+    private fun trustedContact(
+        displayName: String,
+        publicKey: String,
+        plaintextSecret: ByteArray,
+        notes: String? = null
+    ): TrustedContact {
+        val encrypted = TotpSecretCodec.encrypt(plaintextSecret, testDek)
+        return TrustedContact(
+            displayName = displayName,
+            publicKey = publicKey,
+            encryptedTotpSecret = encrypted.ciphertext,
+            totpSecretIv = encrypted.iv,
+            notes = notes
+        )
+    }
+
+    /**
+     * Decrypt the ciphertext + IV stored on a row back to plaintext.
+     * Used by assertions that want to check "what would the tick loop
+     * feed into TotpGenerator for this row".
+     */
+    private fun decryptStoredSecret(contact: TrustedContact): ByteArray {
+        return TotpSecretCodec.decrypt(
+            TotpSecretCodec.EncryptedSecret(
+                ciphertext = contact.encryptedTotpSecret,
+                iv = contact.totpSecretIv
+            ),
+            testDek
+        )
+    }
 
     private fun generateEd25519KeyPair(): Pair<ByteArray, ByteArray> {
         val generator = Ed25519KeyPairGenerator()
@@ -88,10 +132,10 @@ class PairingIntegrationTest {
         // Alice derives shared secret and stores contact
         val aliceSecret = EcdhExchange.deriveSharedSecret(alicePrivate, decoded.publicKey)
         dao.insertContact(
-            TrustedContact(
+            trustedContact(
                 displayName = decoded.displayName,
                 publicKey = decoded.publicKey.toHex(),
-                totpSecret = aliceSecret.toHex()
+                plaintextSecret = aliceSecret
             )
         )
 
@@ -137,10 +181,10 @@ class PairingIntegrationTest {
         val bobPayload = QrCodeUtils.decode(bobQr)!!
         val secretAliceSide = EcdhExchange.deriveSharedSecret(alicePrivate, bobPayload.publicKey)
         dao.insertContact(
-            TrustedContact(
+            trustedContact(
                 displayName = bobPayload.displayName,
                 publicKey = bobPayload.publicKey.toHex(),
-                totpSecret = secretAliceSide.toHex()
+                plaintextSecret = secretAliceSide
             )
         )
 
@@ -151,9 +195,10 @@ class PairingIntegrationTest {
         // Secrets match
         assertArrayEquals(secretAliceSide, secretBobSide)
 
-        // What's stored in the DB also matches
+        // What's stored in the DB also matches — decrypt the ciphertext
+        // column the same way the tick loop does and compare.
         val storedContact = dao.getAllContacts().first()[0]
-        val storedSecret = storedContact.totpSecret.hexToBytes()
+        val storedSecret = decryptStoredSecret(storedContact)
         val now = System.currentTimeMillis()
         assertEquals(
             TotpGenerator.generateCode(secretBobSide, now),
@@ -175,10 +220,10 @@ class PairingIntegrationTest {
         val bobPayload = QrCodeUtils.decode(QrCodeUtils.encode("Bob", bobPublic))!!
         val secretBob = EcdhExchange.deriveSharedSecret(alicePrivate, bobPayload.publicKey)
         dao.insertContact(
-            TrustedContact(
+            trustedContact(
                 displayName = "Bob",
                 publicKey = bobPayload.publicKey.toHex(),
-                totpSecret = secretBob.toHex()
+                plaintextSecret = secretBob
             )
         )
 
@@ -186,10 +231,10 @@ class PairingIntegrationTest {
         val carolPayload = QrCodeUtils.decode(QrCodeUtils.encode("Carol", carolPublic))!!
         val secretCarol = EcdhExchange.deriveSharedSecret(alicePrivate, carolPayload.publicKey)
         dao.insertContact(
-            TrustedContact(
+            trustedContact(
                 displayName = "Carol",
                 publicKey = carolPayload.publicKey.toHex(),
-                totpSecret = secretCarol.toHex()
+                plaintextSecret = secretCarol
             )
         )
 
@@ -198,9 +243,11 @@ class PairingIntegrationTest {
         assertEquals(2, contacts.size)
 
         // Secrets are different
-        assert(!secretBob.contentEquals(secretCarol)) {
-            "Different contacts must have different shared secrets"
-        }
+        assertNotEquals(
+            "Different contacts must have different shared secrets",
+            secretBob.toList(),
+            secretCarol.toList()
+        )
 
         // Each contact's code matches what their device would produce
         val now = System.currentTimeMillis()
@@ -214,8 +261,8 @@ class PairingIntegrationTest {
         val bobStored = contacts.first { it.displayName == "Bob" }
         val carolStored = contacts.first { it.displayName == "Carol" }
 
-        assertEquals(bobExpected, TotpGenerator.generateCode(bobStored.totpSecret.hexToBytes(), now))
-        assertEquals(carolExpected, TotpGenerator.generateCode(carolStored.totpSecret.hexToBytes(), now))
+        assertEquals(bobExpected, TotpGenerator.generateCode(decryptStoredSecret(bobStored), now))
+        assertEquals(carolExpected, TotpGenerator.generateCode(decryptStoredSecret(carolStored), now))
     }
 
     // ── Duplicate detection: same public key is caught ──
@@ -226,7 +273,11 @@ class PairingIntegrationTest {
         val pubKeyHex = bobPublic.toHex()
 
         dao.insertContact(
-            TrustedContact(displayName = "Bob", publicKey = pubKeyHex, totpSecret = "aabb")
+            trustedContact(
+                displayName = "Bob",
+                publicKey = pubKeyHex,
+                plaintextSecret = byteArrayOf(0xaa.toByte(), 0xbb.toByte())
+            )
         )
 
         val existing = dao.getContactByPublicKey(pubKeyHex)
@@ -250,10 +301,10 @@ class PairingIntegrationTest {
         // Victim already has an Alice row with key K1.
         val (_, alicePublic) = generateEd25519KeyPair()
         dao.insertContact(
-            TrustedContact(
+            trustedContact(
                 displayName = "Alice",
                 publicKey = alicePublic.toHex(),
-                totpSecret = "legitsecret"
+                plaintextSecret = "legitsecret".toByteArray()
             )
         )
 
@@ -292,18 +343,18 @@ class PairingIntegrationTest {
         // be untouched as a basic blast-radius check).
         val (_, oldAlicePublic) = generateEd25519KeyPair()
         val oldAliceId = dao.insertContact(
-            TrustedContact(
+            trustedContact(
                 displayName = "Alice",
                 publicKey = oldAlicePublic.toHex(),
-                totpSecret = "oldalicesecret"
+                plaintextSecret = "oldalicesecret".toByteArray()
             )
         )
         val (_, bobPublic) = generateEd25519KeyPair()
         dao.insertContact(
-            TrustedContact(
+            trustedContact(
                 displayName = "Bob",
                 publicKey = bobPublic.toHex(),
-                totpSecret = "bobsecret"
+                plaintextSecret = "bobsecret".toByteArray()
             )
         )
 
@@ -313,10 +364,10 @@ class PairingIntegrationTest {
         val newSecret = EcdhExchange.deriveSharedSecret(victimPrivate, newAlicePublic)
         dao.replaceContact(
             oldAliceId,
-            TrustedContact(
+            trustedContact(
                 displayName = "Alice",
                 publicKey = newAlicePublic.toHex(),
-                totpSecret = newSecret.toHex()
+                plaintextSecret = newSecret
             )
         )
 
@@ -330,10 +381,10 @@ class PairingIntegrationTest {
             newAlicePublic.toHex(),
             alice.publicKey
         )
-        assertEquals(
-            "Alice row must now carry the freshly-derived TOTP secret",
-            newSecret.toHex(),
-            alice.totpSecret
+        assertArrayEquals(
+            "Alice row must decrypt to the freshly-derived TOTP secret",
+            newSecret,
+            decryptStoredSecret(alice)
         )
         assertEquals(
             "Bob must be untouched by the replace",
@@ -364,10 +415,10 @@ class PairingIntegrationTest {
         // even though the VM-level glue is not directly invoked.
         val (_, oldAlicePublic) = generateEd25519KeyPair()
         val oldAliceId = dao.insertContact(
-            TrustedContact(
+            trustedContact(
                 displayName = "Alice",
                 publicKey = oldAlicePublic.toHex(),
-                totpSecret = "oldalicesecret",
+                plaintextSecret = "oldalicesecret".toByteArray(),
                 notes = "my sister"
             )
         )
@@ -387,10 +438,10 @@ class PairingIntegrationTest {
         val existingRow = dao.getContactById(oldAliceId)!!
         dao.replaceContact(
             oldAliceId,
-            TrustedContact(
+            trustedContact(
                 displayName = existingRow.displayName,
                 publicKey = attackerPayload.publicKey.toHex(),
-                totpSecret = newSecret.toHex(),
+                plaintextSecret = newSecret,
                 notes = existingRow.notes
             )
         )
@@ -413,10 +464,10 @@ class PairingIntegrationTest {
             attackerPayload.publicKey.toHex(),
             replaced.publicKey
         )
-        assertEquals(
-            "totpSecret must be the freshly-derived ECDH output",
-            newSecret.toHex(),
-            replaced.totpSecret
+        assertArrayEquals(
+            "totpSecret must decrypt to the freshly-derived ECDH output",
+            newSecret,
+            decryptStoredSecret(replaced)
         )
     }
 
@@ -428,10 +479,10 @@ class PairingIntegrationTest {
         // friends named Chris" path, kept as an escape hatch.
         val (_, firstAlicePublic) = generateEd25519KeyPair()
         dao.insertContact(
-            TrustedContact(
+            trustedContact(
                 displayName = "Alice",
                 publicKey = firstAlicePublic.toHex(),
-                totpSecret = "firstsecret"
+                plaintextSecret = "firstsecret".toByteArray()
             )
         )
 
@@ -439,10 +490,10 @@ class PairingIntegrationTest {
         val (_, secondAlicePublic) = generateEd25519KeyPair()
         val secondSecret = EcdhExchange.deriveSharedSecret(victimPrivate, secondAlicePublic)
         dao.insertContact(
-            TrustedContact(
+            trustedContact(
                 displayName = "Alice",
                 publicKey = secondAlicePublic.toHex(),
-                totpSecret = secondSecret.toHex()
+                plaintextSecret = secondSecret
             )
         )
 

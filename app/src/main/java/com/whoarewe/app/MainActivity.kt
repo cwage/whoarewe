@@ -37,6 +37,7 @@ import com.whoarewe.app.crypto.QrDecoder
 import com.whoarewe.app.data.AppDatabase
 import com.whoarewe.app.data.Identity
 import com.whoarewe.app.ui.screens.ContactListScreen
+import com.whoarewe.app.ui.screens.LockedScreen
 import com.whoarewe.app.ui.screens.NameCollisionDialog
 import com.whoarewe.app.ui.screens.PairStep
 import com.whoarewe.app.ui.screens.PairWizardScreen
@@ -280,6 +281,12 @@ class MainActivity : FragmentActivity() {
                                 state = state,
                                 onDisplayNameChanged = { viewModel.updateDisplayName(it) },
                                 onGenerateIdentity = { viewModel.requestGenerateIdentity() }
+                            )
+                        }
+                        is UiState.Locked -> {
+                            LockedScreen(
+                                state = state,
+                                onUnlock = { viewModel.retryUnlock() }
                             )
                         }
                         is UiState.Main -> {
