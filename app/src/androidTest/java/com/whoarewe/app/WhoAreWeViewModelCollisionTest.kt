@@ -5,6 +5,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.whoarewe.app.crypto.HexCodec
 import com.whoarewe.app.crypto.QrCodeUtils
+import com.whoarewe.app.crypto.TotpSecretCodec
 import com.whoarewe.app.data.AppDatabase
 import com.whoarewe.app.data.ContactDao
 import com.whoarewe.app.data.TrustedContact
@@ -81,14 +82,26 @@ class WhoAreWeViewModelCollisionTest {
         return (generator.generateKeyPair().public as Ed25519PublicKeyParameters).encoded
     }
 
-    private suspend fun seedContact(name: String, publicKey: ByteArray): Long =
-        dao.insertContact(
+    // Fixed DEK and plaintext for seeded collision rows. The VM
+    // cannot decrypt these (no identity + no unlock flow in this test
+    // file), but the collision scan only reads `displayName` and
+    // `publicKey`, so the ciphertext is never exercised — any well-
+    // formed AES-GCM blob under any key will do.
+    private val seedDek = ByteArray(32) { 0x77 }
+    private fun seedEncrypted(): TotpSecretCodec.EncryptedSecret =
+        TotpSecretCodec.encrypt(byteArrayOf(0xde.toByte(), 0xad.toByte()), seedDek)
+
+    private suspend fun seedContact(name: String, publicKey: ByteArray): Long {
+        val e = seedEncrypted()
+        return dao.insertContact(
             TrustedContact(
                 displayName = name,
                 publicKey = HexCodec.bytesToHex(publicKey),
-                totpSecret = "deadbeef"
+                encryptedTotpSecret = e.ciphertext,
+                totpSecretIv = e.iv
             )
         )
+    }
 
     private suspend fun makeVm(): WhoAreWeViewModel {
         val vm = withContext(Dispatchers.Main) { WhoAreWeViewModel(app) }

@@ -13,6 +13,7 @@ import org.bouncycastle.crypto.params.Ed25519KeyGenerationParameters
 import org.bouncycastle.crypto.params.Ed25519PrivateKeyParameters
 import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
 import java.io.File
+import java.nio.ByteBuffer
 import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -24,6 +25,13 @@ class KeyManager(private val context: Context) {
     companion object {
         private const val KEYSTORE_ALIAS = "whoarewe_identity_key"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
+
+        /**
+         * Exact-byte sentinel written by [e2eWriteIdentityFilesForTest].
+         * Matched by [hasSentinelKey] so the vm can skip the unlock
+         * biometric gate in Maestro flows. See cwage/whoarewe#32.
+         */
+        private val SENTINEL_BLOB = byteArrayOf(0)
     }
 
     private val keysDir: File
@@ -167,7 +175,25 @@ class KeyManager(private val context: Context) {
         }
     }
 
-    suspend fun generateKey(cipher: Cipher): Result<String> = withContext(Dispatchers.IO) {
+    /**
+     * Result of [generateKey]: the displayed fingerprint plus the freshly
+     * generated 32-byte TOTP DEK (see cwage/whoarewe#32). The caller takes
+     * ownership of [dek] — typically stuffing it into the VM's in-memory
+     * cache — and is responsible for zeroing it when the session ends.
+     */
+    class GenerateResult(val fingerprint: String, val dek: ByteArray)
+
+    /**
+     * Result of [decryptIdentityBlob]: both halves of the encrypted identity
+     * blob. Callers at *pair time* use [privateKey] (for ECDH) and discard
+     * [dek] (the VM cache already has it). Callers at *unlock time* use
+     * [dek] (to populate the cache) and discard [privateKey]. In either
+     * case the caller is responsible for zeroing the half it doesn't need,
+     * and eventually the half it does.
+     */
+    class DecryptedIdentity(val dek: ByteArray, val privateKey: ByteArray)
+
+    suspend fun generateKey(cipher: Cipher): Result<GenerateResult> = withContext(Dispatchers.IO) {
         runCatching {
             val generator = Ed25519KeyPairGenerator()
             generator.init(Ed25519KeyGenerationParameters(SecureRandom()))
@@ -179,24 +205,85 @@ class KeyManager(private val context: Context) {
             val privateKeyBytes = privateKey.encoded
             val publicKeyBytes = publicKey.encoded
 
-            // Encrypt private key with biometric-bound AES key
-            val encrypted = cipher.doFinal(privateKeyBytes)
-            encryptedKeyFile().writeBytes(encrypted)
-            ivFile().writeBytes(cipher.iv)
+            // Fresh TOTP DEK lives inside the same biometric-wrapped blob
+            // as the Ed25519 private key. See the identity blob format
+            // comment on `packIdentityBlob` — length-prefixed so the
+            // unpack code doesn't need to hard-code the DEK size.
+            val dek = TotpSecretCodec.generateDek()
+            val plaintextBlob = packIdentityBlob(dek, privateKeyBytes)
 
-            // Public key stored as raw bytes
-            publicKeyFile().writeBytes(publicKeyBytes)
+            try {
+                val encrypted = cipher.doFinal(plaintextBlob)
+                encryptedKeyFile().writeBytes(encrypted)
+                ivFile().writeBytes(cipher.iv)
 
-            // Zero out private key bytes
-            privateKeyBytes.fill(0)
+                // Public key stored as raw bytes
+                publicKeyFile().writeBytes(publicKeyBytes)
 
-            getFingerprint()!!
+                GenerateResult(fingerprint = getFingerprint()!!, dek = dek.copyOf())
+            } finally {
+                // Zero every ephemeral secret buffer we own. The caller
+                // gets their own copy of the DEK via `dek.copyOf()` above
+                // and is responsible for its own zeroization.
+                plaintextBlob.fill(0)
+                dek.fill(0)
+                privateKeyBytes.fill(0)
+            }
         }
     }
 
-    fun decryptPrivateKey(cipher: Cipher): ByteArray {
+    /**
+     * Decrypt the biometric-wrapped identity blob and return both halves.
+     * See [DecryptedIdentity] for the caller responsibility split.
+     */
+    fun decryptIdentityBlob(cipher: Cipher): DecryptedIdentity {
         val encrypted = encryptedKeyFile().readBytes()
-        return cipher.doFinal(encrypted)
+        val plaintext = cipher.doFinal(encrypted)
+        try {
+            return unpackIdentityBlob(plaintext)
+        } finally {
+            plaintext.fill(0)
+        }
+    }
+
+    /**
+     * Identity blob format (cwage/whoarewe#32):
+     *
+     *   [4-byte BE length-of-DEK][DEK bytes][Ed25519 private key bytes]
+     *
+     * Length-prefixed so the unpack path doesn't need to hard-code the DEK
+     * size — if [TotpSecretCodec.DEK_BYTES] ever moves from 32 to 64 or
+     * similar, only the pack/unpack pair needs updating.
+     *
+     * The Ed25519 private key is always [Ed25519PrivateKeyParameters.KEY_SIZE]
+     * bytes; it lives at the end of the blob and occupies whatever is left
+     * after the length-prefixed DEK.
+     */
+    private fun packIdentityBlob(dek: ByteArray, privateKey: ByteArray): ByteArray {
+        val blob = ByteArray(4 + dek.size + privateKey.size)
+        ByteBuffer.wrap(blob).putInt(0, dek.size)
+        System.arraycopy(dek, 0, blob, 4, dek.size)
+        System.arraycopy(privateKey, 0, blob, 4 + dek.size, privateKey.size)
+        return blob
+    }
+
+    private fun unpackIdentityBlob(blob: ByteArray): DecryptedIdentity {
+        if (blob.size < 4) {
+            throw KeyInvalidatedException("Identity blob is truncated (len=${blob.size})")
+        }
+        val dekLen = ByteBuffer.wrap(blob).getInt(0)
+        if (dekLen <= 0 || 4 + dekLen > blob.size) {
+            throw KeyInvalidatedException("Identity blob has invalid DEK length $dekLen")
+        }
+        val dek = ByteArray(dekLen)
+        System.arraycopy(blob, 4, dek, 0, dekLen)
+        val privateKeyLen = blob.size - 4 - dekLen
+        if (privateKeyLen <= 0) {
+            throw KeyInvalidatedException("Identity blob has no private key material")
+        }
+        val privateKey = ByteArray(privateKeyLen)
+        System.arraycopy(blob, 4 + dekLen, privateKey, 0, privateKeyLen)
+        return DecryptedIdentity(dek = dek, privateKey = privateKey)
     }
 
     /**
@@ -207,9 +294,14 @@ class KeyManager(private val context: Context) {
      * `BiometricPrompt` or touching Android Keystore.
      *
      * The encrypted blob is intentionally garbage. Any code path that tries
-     * to call `decryptPrivateKey` against it will fail. The only consumer of
-     * this state — the Maestro `pair-wizard-navigation` flow — only reads
-     * the public key (for QR display), never the private one.
+     * to call `decryptIdentityBlob` against it will fail. The only consumer
+     * of this state — the Maestro `pair-wizard-navigation` flow — only reads
+     * the public key (for QR display), never the private one, and scripts/
+     * e2e-pairing.sh exercises the real biometric flow for actual pairing.
+     *
+     * The Locked → unlock biometric path added in cwage/whoarewe#32 detects
+     * this sentinel state via [hasSentinelKey] and bypasses the prompt,
+     * because Maestro cannot drive the system credential bouncer.
      *
      * Should only be called from a debug-only intent handler. The method
      * itself is unconditionally compiled (Kotlin has no debug-only modifier),
@@ -217,8 +309,25 @@ class KeyManager(private val context: Context) {
      */
     fun e2eWriteIdentityFilesForTest(publicKey: ByteArray) {
         publicKeyFile().writeBytes(publicKey)
-        encryptedKeyFile().writeBytes(byteArrayOf(0))
-        ivFile().writeBytes(byteArrayOf(0))
+        encryptedKeyFile().writeBytes(SENTINEL_BLOB)
+        ivFile().writeBytes(SENTINEL_BLOB)
+    }
+
+    /**
+     * True when the identity files on disk were written by
+     * [e2eWriteIdentityFilesForTest] — a Maestro test bootstrap rather
+     * than a real biometric-unlocked identity. The vm uses this to skip
+     * the unlock biometric gate in e2e mode. See cwage/whoarewe#32.
+     *
+     * The detection is by exact byte match against [SENTINEL_BLOB]. A real
+     * encrypted identity blob is at minimum `4 + 32 + 32` bytes plaintext
+     * plus a GCM tag after encryption, so the one-byte sentinel cannot
+     * collide with a legitimately-wrapped identity.
+     */
+    fun hasSentinelKey(): Boolean {
+        val f = encryptedKeyFile()
+        if (!f.exists()) return false
+        return f.readBytes().contentEquals(SENTINEL_BLOB)
     }
 
     private fun deleteKeys() {

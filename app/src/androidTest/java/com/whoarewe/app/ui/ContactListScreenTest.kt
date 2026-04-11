@@ -38,13 +38,18 @@ class ContactListScreenTest {
 
     @Test
     fun withContacts_showsNamesAndCodes() {
+        // Dummy ciphertext/IV bytes — this Compose test never decrypts,
+        // it just renders the list of contacts with pre-formatted codes.
+        val dummyCiphertext = byteArrayOf(0, 0, 0, 0)
+        val dummyIv = byteArrayOf(0, 0, 0, 0)
         val contacts = listOf(
             ContactWithCode(
                 contact = TrustedContact(
                     id = 1,
                     displayName = "Bob",
                     publicKey = "aabb",
-                    totpSecret = "ccdd"
+                    encryptedTotpSecret = dummyCiphertext,
+                    totpSecretIv = dummyIv
                 ),
                 code = "123456"
             ),
@@ -53,7 +58,8 @@ class ContactListScreenTest {
                     id = 2,
                     displayName = "Carol",
                     publicKey = "eeff",
-                    totpSecret = "1122"
+                    encryptedTotpSecret = dummyCiphertext,
+                    totpSecretIv = dummyIv
                 ),
                 code = "789012"
             )

@@ -7,6 +7,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
@@ -52,14 +53,30 @@ class ContactDaoTest {
         assertNull(result)
     }
 
+    // Deterministic ciphertext/IV helpers. These tests are DAO-level —
+    // they don't care about cryptographic correctness, just that the row
+    // round-trips. Each tag yields distinct-but-stable bytes so an
+    // assertion can compare "this row has the `oldsecret` bytes" without
+    // running AES at all.
+    private fun ct(tag: String): ByteArray = "ct:$tag".toByteArray()
+    private fun iv(tag: String): ByteArray = "iv:$tag".toByteArray()
+
+    private fun contact(
+        name: String,
+        publicKey: String,
+        secretTag: String = name,
+        notes: String? = null
+    ) = TrustedContact(
+        displayName = name,
+        publicKey = publicKey,
+        encryptedTotpSecret = ct(secretTag),
+        totpSecretIv = iv(secretTag),
+        notes = notes
+    )
+
     @Test
     fun insertAndRetrieveContacts() = runTest {
-        val contact = TrustedContact(
-            displayName = "Bob",
-            publicKey = "aabb",
-            totpSecret = "ccdd"
-        )
-        dao.insertContact(contact)
+        dao.insertContact(contact(name = "Bob", publicKey = "aabb"))
 
         val contacts = dao.getAllContacts().first()
         assertEquals(1, contacts.size)
@@ -68,9 +85,9 @@ class ContactDaoTest {
 
     @Test
     fun contactsReturnedInAlphabeticalOrder() = runTest {
-        dao.insertContact(TrustedContact(displayName = "Zara", publicKey = "a1", totpSecret = "s1"))
-        dao.insertContact(TrustedContact(displayName = "Alice", publicKey = "a2", totpSecret = "s2"))
-        dao.insertContact(TrustedContact(displayName = "Bob", publicKey = "a3", totpSecret = "s3"))
+        dao.insertContact(contact(name = "Zara", publicKey = "a1"))
+        dao.insertContact(contact(name = "Alice", publicKey = "a2"))
+        dao.insertContact(contact(name = "Bob", publicKey = "a3"))
 
         val contacts = dao.getAllContacts().first()
         assertEquals(listOf("Alice", "Bob", "Zara"), contacts.map { it.displayName })
@@ -78,7 +95,7 @@ class ContactDaoTest {
 
     @Test
     fun getContactByPublicKey_findsExisting() = runTest {
-        dao.insertContact(TrustedContact(displayName = "Bob", publicKey = "aabb", totpSecret = "ccdd"))
+        dao.insertContact(contact(name = "Bob", publicKey = "aabb"))
 
         val found = dao.getContactByPublicKey("aabb")
         assertNotNull(found)
@@ -93,8 +110,7 @@ class ContactDaoTest {
 
     @Test
     fun deleteContact_removesIt() = runTest {
-        val contact = TrustedContact(displayName = "Bob", publicKey = "aabb", totpSecret = "ccdd")
-        val id = dao.insertContact(contact)
+        val id = dao.insertContact(contact(name = "Bob", publicKey = "aabb"))
 
         val inserted = dao.getContactById(id)
         assertNotNull(inserted)
@@ -106,9 +122,7 @@ class ContactDaoTest {
 
     @Test
     fun updateContact_changesFields() = runTest {
-        val id = dao.insertContact(
-            TrustedContact(displayName = "Bob", publicKey = "aabb", totpSecret = "ccdd")
-        )
+        val id = dao.insertContact(contact(name = "Bob", publicKey = "aabb"))
         val original = dao.getContactById(id)!!
         dao.updateContact(original.copy(displayName = "Robert", notes = "Updated"))
 
@@ -137,15 +151,15 @@ class ContactDaoTest {
         //   2. The new Alice row carries the new key and secret.
         //   3. The unrelated Bob row is not affected.
         val oldAliceId = dao.insertContact(
-            TrustedContact(displayName = "Alice", publicKey = "oldkey", totpSecret = "oldsecret")
+            contact(name = "Alice", publicKey = "oldkey", secretTag = "oldalice")
         )
         val bobId = dao.insertContact(
-            TrustedContact(displayName = "Bob", publicKey = "bobkey", totpSecret = "bobsecret")
+            contact(name = "Bob", publicKey = "bobkey", secretTag = "bob")
         )
 
         dao.replaceContact(
             oldAliceId,
-            TrustedContact(displayName = "Alice", publicKey = "newkey", totpSecret = "newsecret")
+            contact(name = "Alice", publicKey = "newkey", secretTag = "newalice")
         )
 
         val all = dao.getAllContacts().first()
@@ -156,7 +170,8 @@ class ContactDaoTest {
 
         val newAlice = all.first { it.displayName == "Alice" }
         assertEquals("newkey", newAlice.publicKey)
-        assertEquals("newsecret", newAlice.totpSecret)
+        assertArrayEquals(ct("newalice"), newAlice.encryptedTotpSecret)
+        assertArrayEquals(iv("newalice"), newAlice.totpSecretIv)
         // Use assertNotEquals rather than Kotlin/Java `assert(...)` because
         // JVM assertions are compiled in but disabled at runtime unless the
         // instrumentation runner is launched with `-ea`, and our runner
@@ -173,7 +188,8 @@ class ContactDaoTest {
         val bob = dao.getContactById(bobId)
         assertNotNull(bob)
         assertEquals("bobkey", bob!!.publicKey)
-        assertEquals("bobsecret", bob.totpSecret)
+        assertArrayEquals(ct("bob"), bob.encryptedTotpSecret)
+        assertArrayEquals(iv("bob"), bob.totpSecretIv)
     }
 
     @Test
@@ -185,7 +201,7 @@ class ContactDaoTest {
         // and nothing else is touched. The delete is a no-op in that case.
         dao.replaceContact(
             oldId = 999L,
-            replacement = TrustedContact(displayName = "Alice", publicKey = "newkey", totpSecret = "newsecret")
+            replacement = contact(name = "Alice", publicKey = "newkey", secretTag = "newalice")
         )
 
         val all = dao.getAllContacts().first()

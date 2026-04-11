@@ -80,8 +80,9 @@ This is the only test layer that runs the real production path through biometric
 - Real `onQrScanned(rawData)` — the exact method the camera/picker calls in production
 - Real `KeyManager.getDecryptionCipher` → second biometric unlock → real private-key decrypt
 - Real `EcdhExchange.deriveSharedSecret(our_priv, their_pub)` X25519 exchange
-- Real Room insert of `TrustedContact(publicKey, totpSecret)`
-- Real `TotpGenerator` against the stored secret
+- Real Room insert of `TrustedContact(publicKey, encryptedTotpSecret, totpSecretIv)` via `persistPairedContact`'s ciphertext path (cwage/whoarewe#32)
+- Real `TotpSecretCodec` encrypt-at-pair / decrypt-at-unlock round-trip against the per-identity DEK held inside the biometric-wrapped identity blob
+- Real `TotpGenerator` against the plaintext cache entry the VM populates at pair time
 - Real `ContactListScreen` composable, with the assertion reading the rendered six-digit code off a `uiautomator dump`
 
 The QR strings fed to each device come from the same `QrCodeUtils.encode(displayName, publicKey)` call the pair wizard makes inside `ShowQrStep` — byte-for-byte identical. From `onQrScanned` forward there is zero behavioral difference between "the test harness handed me this string via intent" and "I just scanned it with my camera."
