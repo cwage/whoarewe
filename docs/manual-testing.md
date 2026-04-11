@@ -146,6 +146,18 @@ Now repeat in reverse: screenshot the "Almost done" QR, ferry it to the first de
 
 Both devices should now show each other in the contact list, each with a rotating six-digit code. **The codes must match** between the two devices. If they don't, something is broken and we'd like to hear about it.
 
+## What to verify: screen capture protection
+
+Since cwage/whoarewe#22, the app sets `FLAG_SECURE` on the window whenever a TOTP code could be visible — the contact list and the non-QR steps of the pair wizard. This blocks the stock screenshot button, `MediaProjection` screen recorders, the task-switcher / recents thumbnail, and cast/mirror displays from capturing the codes.
+
+Quick sanity checks on a real device:
+
+- On the **contact list**: press the screenshot button. You should get the system's "Can't take screenshot due to app policy" toast, not an image. Background the app with the recents gesture — the app's tile should be blank, not a readable copy of the code list.
+- In the pair wizard on **Show your code** / **Almost done** (ShowFirst / ShowAfterScan): the screenshot button must still work. These screens intentionally display the user's own QR, and manual pairing relies on being able to `adb exec-out screencap -p` them (see `scripts/manual-pair.sh`'s `transfer_qr`).
+- On **Setup** and **Choose / Scan their code / Paired!**: screenshot behavior is currently "secure" too (no secrets on those screens, but cheaper to leave the flag on than to toggle it).
+
+What this does **not** block: a camera pointed at the screen, accessibility-service text exfiltration (tracked separately in cwage/whoarewe#28), or a rooted adversary reading the framebuffer. `FLAG_SECURE` is a screen-capture defence, not a full confidentiality guarantee.
+
 ## Gotchas
 
 - **API 28 / 29 use the legacy Keystore auth path.** On those API levels `KeyManager` configures the key with `setUserAuthenticationValidityDurationSeconds(10)` instead of `setUserAuthenticationParameters`, which forces `cipher.init()` to run *after* `BiometricPrompt` has refreshed the auth window. The app handles this automatically — you don't have to do anything — but if something breaks in the keygen or AddContact path on an old emulator and works fine on API 30+, that's where to start looking. The legacy path is covered by the `pairing (28)` job in `.github/workflows/e2e.yml` and was historically broken (cwage/whoarewe#6, fixed in PR #10).

@@ -4,6 +4,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +37,7 @@ import com.whoarewe.app.crypto.QrDecoder
 import com.whoarewe.app.data.AppDatabase
 import com.whoarewe.app.data.Identity
 import com.whoarewe.app.ui.screens.ContactListScreen
+import com.whoarewe.app.ui.screens.PairStep
 import com.whoarewe.app.ui.screens.PairWizardScreen
 import com.whoarewe.app.ui.screens.SetupScreen
 import com.whoarewe.app.ui.theme.WhoAreWeTheme
@@ -193,6 +195,32 @@ class MainActivity : FragmentActivity() {
                     val viewModel: WhoAreWeViewModel = viewModel()
                     val uiState by viewModel.uiState.collectAsState()
                     val biometricRequest by viewModel.biometricRequest.collectAsState()
+
+                    // Apply FLAG_SECURE whenever the window could show a TOTP
+                    // code — i.e. the contact list (pairStep == null) or any
+                    // pair-wizard step *other than* the two that display the
+                    // user's own QR. ShowFirst and ShowAfterScan are explicitly
+                    // left captureable because the QR is meant to be shared via
+                    // screenshot during manual pairing (see docs/manual-testing.md
+                    // and scripts/manual-pair.sh's transfer_qr helper). The flag
+                    // is enforced by SurfaceFlinger so it blocks the screenshot
+                    // button, MediaProjection recorders, recents thumbnails, and
+                    // cast/mirror displays — but *not* accessibility text reads
+                    // (tracked separately in cwage/whoarewe#28) or a camera
+                    // pointed at the screen. See cwage/whoarewe#22.
+                    val protectFromCapture = when (val state = uiState) {
+                        is UiState.Main ->
+                            state.pairStep !is PairStep.ShowFirst &&
+                                state.pairStep !is PairStep.ShowAfterScan
+                        else -> false
+                    }
+                    LaunchedEffect(protectFromCapture) {
+                        if (protectFromCapture) {
+                            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        } else {
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                        }
+                    }
 
                     val context = LocalContext.current
 
