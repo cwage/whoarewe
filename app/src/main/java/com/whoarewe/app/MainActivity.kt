@@ -37,6 +37,7 @@ import com.whoarewe.app.crypto.QrDecoder
 import com.whoarewe.app.data.AppDatabase
 import com.whoarewe.app.data.Identity
 import com.whoarewe.app.ui.screens.ContactListScreen
+import com.whoarewe.app.ui.screens.NameCollisionDialog
 import com.whoarewe.app.ui.screens.PairStep
 import com.whoarewe.app.ui.screens.PairWizardScreen
 import com.whoarewe.app.ui.screens.SetupScreen
@@ -206,6 +207,7 @@ class MainActivity : FragmentActivity() {
                     val viewModel: WhoAreWeViewModel = viewModel()
                     val uiState by viewModel.uiState.collectAsState()
                     val biometricRequest by viewModel.biometricRequest.collectAsState()
+                    val pendingNameCollision by viewModel.pendingNameCollision.collectAsState()
 
                     // The window is FLAG_SECURE by default (set in onCreate).
                     // We only *clear* the flag while the pair wizard is on
@@ -281,6 +283,23 @@ class MainActivity : FragmentActivity() {
                             )
                         }
                         is UiState.Main -> {
+                            // The key-change warning dialog (cwage/whoarewe#33).
+                            // Rendered before the screen itself so it overlays
+                            // whichever of the Main sub-screens is active —
+                            // the collision check fires from onQrScanned,
+                            // which can be driven from either the pair wizard
+                            // (normal case) or a direct scan from the contact
+                            // list, so the dialog cannot live inside either
+                            // screen alone.
+                            pendingNameCollision?.let { collision ->
+                                NameCollisionDialog(
+                                    existingName = collision.existing.displayName,
+                                    onReplace = { viewModel.confirmReplaceContact() },
+                                    onAddAsSecond = { viewModel.confirmAddAsSecondContact() },
+                                    onCancel = { viewModel.cancelNameCollision() }
+                                )
+                            }
+
                             val pairStep = state.pairStep
                             if (pairStep != null) {
                                 val publicKey = viewModel.keyManager.getPublicKeyBytes()

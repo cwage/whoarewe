@@ -10,6 +10,7 @@ import com.whoarewe.app.crypto.QrCodeUtils
 import com.whoarewe.app.crypto.TotpGenerator
 import com.whoarewe.app.data.AppDatabase
 import com.whoarewe.app.data.Identity
+import com.whoarewe.app.data.NameMatcher
 import com.whoarewe.app.data.TrustedContact
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
@@ -20,7 +21,9 @@ import org.bouncycastle.crypto.params.Ed25519PublicKeyParameters
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -229,6 +232,228 @@ class PairingIntegrationTest {
         val existing = dao.getContactByPublicKey(pubKeyHex)
         assertNotNull("Should detect existing contact by public key", existing)
         assertEquals("Bob", existing!!.displayName)
+    }
+
+    // ── Name collision with a different key (cwage/whoarewe#33) ──
+    //
+    // Covers the full attacker shape end-to-end: Alice is already paired;
+    // an attacker generates a *fresh* keypair and hands over a QR whose
+    // display name is "Alice". The legitimate dedup check
+    // (`getContactByPublicKey`) misses — by design, since it keys on pubkey
+    // — and the collision is only caught by iterating stored contacts and
+    // comparing normalized names. The Replace path must end with exactly
+    // one row, atomically swapped, carrying the attacker's key; the
+    // Add-as-second path must end with two rows sharing a display name.
+
+    @Test
+    fun nameCollision_dedupeByPublicKeyMissesTheAttack() = runTest {
+        // Victim already has an Alice row with key K1.
+        val (_, alicePublic) = generateEd25519KeyPair()
+        dao.insertContact(
+            TrustedContact(
+                displayName = "Alice",
+                publicKey = alicePublic.toHex(),
+                totpSecret = "legitsecret"
+            )
+        )
+
+        // Attacker generates their own keypair and crafts an "Alice" QR.
+        val (_, attackerPublic) = generateEd25519KeyPair()
+        val attackerQr = QrCodeUtils.encode("Alice", attackerPublic)
+        val decoded = QrCodeUtils.decode(attackerQr)!!
+
+        // The existing dedup path does not catch this — the attacker's
+        // public key is novel. This is the gap that collision detection
+        // has to close; pinning the behavior here makes it obvious why
+        // a name-based check is necessary on top of the pubkey check.
+        val byKey = dao.getContactByPublicKey(decoded.publicKey.toHex())
+        assertNull("Pubkey dedup must miss — this is the whole bug", byKey)
+
+        // The name-based scan (what WhoAreWeViewModel does) finds it.
+        val byName = dao.getAllContacts().first().firstOrNull { row ->
+            NameMatcher.matches(row.displayName, decoded.displayName)
+        }
+        assertNotNull("Name-based collision check must catch the attacker's QR", byName)
+        assertEquals("Alice", byName!!.displayName)
+        // assertNotEquals, not Kotlin/Java `assert(...)` — the latter is
+        // a runtime-disabled no-op unless the instrumentation runner is
+        // launched with `-ea`, which ours is not. See Copilot round 1
+        // on PR #37.
+        assertNotEquals(
+            "Collided row must have a different key from the incoming payload",
+            decoded.publicKey.toHex(),
+            byName.publicKey
+        )
+    }
+
+    @Test
+    fun nameCollision_replacePath_atomicallySwapsAlice() = runTest {
+        // Two contacts: Alice (the one we will replace) and Bob (who must
+        // be untouched as a basic blast-radius check).
+        val (_, oldAlicePublic) = generateEd25519KeyPair()
+        val oldAliceId = dao.insertContact(
+            TrustedContact(
+                displayName = "Alice",
+                publicKey = oldAlicePublic.toHex(),
+                totpSecret = "oldalicesecret"
+            )
+        )
+        val (_, bobPublic) = generateEd25519KeyPair()
+        dao.insertContact(
+            TrustedContact(
+                displayName = "Bob",
+                publicKey = bobPublic.toHex(),
+                totpSecret = "bobsecret"
+            )
+        )
+
+        // User picked "Replace existing Alice" on the collision dialog.
+        val (victimPrivate, _) = generateEd25519KeyPair()
+        val (_, newAlicePublic) = generateEd25519KeyPair()
+        val newSecret = EcdhExchange.deriveSharedSecret(victimPrivate, newAlicePublic)
+        dao.replaceContact(
+            oldAliceId,
+            TrustedContact(
+                displayName = "Alice",
+                publicKey = newAlicePublic.toHex(),
+                totpSecret = newSecret.toHex()
+            )
+        )
+
+        val all = dao.getAllContacts().first()
+        assertEquals("Replace must leave exactly two rows (Alice + Bob)", 2, all.size)
+        assertNull("Old Alice row must be gone", dao.getContactById(oldAliceId))
+
+        val alice = all.first { it.displayName == "Alice" }
+        assertEquals(
+            "Alice row must now carry the freshly-paired public key",
+            newAlicePublic.toHex(),
+            alice.publicKey
+        )
+        assertEquals(
+            "Alice row must now carry the freshly-derived TOTP secret",
+            newSecret.toHex(),
+            alice.totpSecret
+        )
+        assertEquals(
+            "Bob must be untouched by the replace",
+            bobPublic.toHex(),
+            all.first { it.displayName == "Bob" }.publicKey
+        )
+    }
+
+    @Test
+    fun nameCollision_replacePath_preservesExistingNotesAndDisplayNameCasing() = runTest {
+        // Pin the "continuity of the user's view" contract for Replace
+        // that `persistPairedContact` implements (cwage/whoarewe#33,
+        // Copilot round 1). When the user says "this is still the same
+        // person with a new key":
+        //   - the label they're used to seeing ("Alice") must survive,
+        //     even if the attacker's QR typed "alice" with a different
+        //     casing — preserving existing.displayName is the only way
+        //     to avoid letting a hostile QR silently reformat a trusted
+        //     contact's label out from under the user,
+        //   - and any annotation the user has ("my sister") must
+        //     survive because it's user-owned metadata, not identity
+        //     material.
+        // Only the publicKey and totpSecret should actually change.
+        //
+        // This test mirrors the exact shape of the `existingRow`-aware
+        // TrustedContact construction in `persistPairedContact`. If a
+        // future refactor drops those preserved fields, this test fires
+        // even though the VM-level glue is not directly invoked.
+        val (_, oldAlicePublic) = generateEd25519KeyPair()
+        val oldAliceId = dao.insertContact(
+            TrustedContact(
+                displayName = "Alice",
+                publicKey = oldAlicePublic.toHex(),
+                totpSecret = "oldalicesecret",
+                notes = "my sister"
+            )
+        )
+
+        // Incoming QR has the same name with *different* casing to make
+        // the "did we preserve the existing casing?" assertion non-trivial.
+        val (victimPrivate, _) = generateEd25519KeyPair()
+        val (_, newAlicePublic) = generateEd25519KeyPair()
+        val attackerPayload = QrCodeUtils.decode(
+            QrCodeUtils.encode("alice", newAlicePublic)
+        )!!
+        val newSecret = EcdhExchange.deriveSharedSecret(victimPrivate, attackerPayload.publicKey)
+
+        // Build the replacement the same way persistPairedContact does
+        // when replaceId != null: load the old row, carry displayName
+        // and notes from it, swap in the new key and derived secret.
+        val existingRow = dao.getContactById(oldAliceId)!!
+        dao.replaceContact(
+            oldAliceId,
+            TrustedContact(
+                displayName = existingRow.displayName,
+                publicKey = attackerPayload.publicKey.toHex(),
+                totpSecret = newSecret.toHex(),
+                notes = existingRow.notes
+            )
+        )
+
+        val all = dao.getAllContacts().first()
+        assertEquals(1, all.size)
+        val replaced = all[0]
+        assertEquals(
+            "displayName must keep the existing casing, not adopt the scanned 'alice'",
+            "Alice",
+            replaced.displayName
+        )
+        assertEquals(
+            "notes (user-owned annotation) must survive the identity swap",
+            "my sister",
+            replaced.notes
+        )
+        assertEquals(
+            "publicKey must be the freshly-paired one",
+            attackerPayload.publicKey.toHex(),
+            replaced.publicKey
+        )
+        assertEquals(
+            "totpSecret must be the freshly-derived ECDH output",
+            newSecret.toHex(),
+            replaced.totpSecret
+        )
+    }
+
+    @Test
+    fun nameCollision_addAsSecondPath_leavesTwoAliceRows() = runTest {
+        // User picked "Add as a second Alice" on the collision dialog.
+        // The DB must end with two rows both named "Alice", each with
+        // its own cryptographic identity — this is the long-tail "two
+        // friends named Chris" path, kept as an escape hatch.
+        val (_, firstAlicePublic) = generateEd25519KeyPair()
+        dao.insertContact(
+            TrustedContact(
+                displayName = "Alice",
+                publicKey = firstAlicePublic.toHex(),
+                totpSecret = "firstsecret"
+            )
+        )
+
+        val (victimPrivate, _) = generateEd25519KeyPair()
+        val (_, secondAlicePublic) = generateEd25519KeyPair()
+        val secondSecret = EcdhExchange.deriveSharedSecret(victimPrivate, secondAlicePublic)
+        dao.insertContact(
+            TrustedContact(
+                displayName = "Alice",
+                publicKey = secondAlicePublic.toHex(),
+                totpSecret = secondSecret.toHex()
+            )
+        )
+
+        val all = dao.getAllContacts().first()
+        assertEquals(2, all.size)
+        val publicKeys = all.map { it.publicKey }.toSet()
+        assertEquals(
+            "Both Alice rows must be present with their distinct public keys",
+            setOf(firstAlicePublic.toHex(), secondAlicePublic.toHex()),
+            publicKeys
+        )
     }
 
     // ── QR round-trip preserves key material for valid ECDH ──
