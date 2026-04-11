@@ -21,6 +21,7 @@ import com.whoarewe.app.data.TrustedContact
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -165,6 +166,29 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
      * [HashMap] would race in that setup.
      */
     private val totpSecretCache = ConcurrentHashMap<Long, ByteArray>()
+
+    /**
+     * Ids whose ciphertext has failed to decrypt under the current DEK.
+     * Tracked separately from the success cache so [ensureCacheContains]
+     * can skip them on subsequent DAO emissions instead of re-running
+     * AES-GCM and re-logging the warning every tick. Cleared by [lock]
+     * (along with the cache itself) and pruned to the live contact set
+     * on every call so deleted rows don't leak ids forever. See
+     * Copilot round 2 on PR #38.
+     */
+    private val failedDecryptIds: MutableSet<Long> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * Monotonically incremented on every [lock] call. [ensureCacheContains]
+     * captures the value at entry and re-checks it before writing decrypted
+     * plaintexts back into [totpSecretCache], so an in-flight Default-
+     * dispatched decrypt loop that races a [lock] call cannot reintroduce
+     * plaintext into a cache that was meant to be cleared. Together with
+     * the per-iteration [ensureActive] check, this gives the re-lock path
+     * a hard guarantee against stale work resurrecting cleared secrets.
+     * See Copilot round 2 on PR #38.
+     */
+    private var unlockEpoch: Long = 0L
 
     /**
      * Handle for the coroutine that runs [enterMainState]'s contact-flow
@@ -396,16 +420,49 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
      * than the caller's (typically Main-immediate) dispatcher so a
      * contact list with a few dozen rows doesn't jank the UI thread on
      * every unlock or DAO emission. [totpSecretCache] is a
-     * [ConcurrentHashMap] (see its field KDoc), so concurrent
-     * `containsKey`/`put` from the Default dispatcher is safe against
-     * the Main-side reads in the tick loop and the IO-side writes in
-     * `persistPairedContact`. See Copilot round 1 on PR #38.
+     * [ConcurrentHashMap] (see its field KDoc), so concurrent reads /
+     * writes across dispatchers are safe.
+     *
+     * Cancellation + re-lock race protection (Copilot round 2 on PR #38):
+     *   - [unlockEpoch] is captured at entry and re-checked on every loop
+     *     iteration AND once more before writing the collected plaintexts
+     *     back into the cache, so a [lock] call that races this loop
+     *     cannot resurrect plaintext into a cache that was meant to be
+     *     cleared. The plaintexts are computed into a *local* map first
+     *     and only merged into the live cache after the post-loop epoch
+     *     check, which keeps the put-then-clear-but-too-late race
+     *     impossible by construction.
+     *   - [ensureActive] is called before each iteration so the loop
+     *     becomes a coroutine cancellation point — `mainStateJob.cancel()`
+     *     in [lock] propagates here and the loop bails out promptly
+     *     without doing more crypto work.
+     *
+     * Failure handling (Copilot round 2 on PR #38): rows whose ciphertext
+     * fails to decrypt are recorded in [failedDecryptIds] and skipped on
+     * future calls until [lock] clears the set, so a single corrupted /
+     * tampered row can't generate repeated AES-GCM work + log spam on
+     * every DAO emission. The set is also pruned to the current contact
+     * id list at the top of each call so deleted rows don't leak.
      */
     private suspend fun ensureCacheContains(contacts: List<TrustedContact>) {
         val dek = totpDek ?: return
-        withContext(Dispatchers.Default) {
+        val epochAtEntry = unlockEpoch
+        // Drop failure markers for rows that no longer exist in the
+        // contact list (deleted contacts) so the set doesn't grow forever.
+        failedDecryptIds.retainAll(contacts.map { it.id }.toSet())
+
+        val newEntries = withContext(Dispatchers.Default) {
+            val result = mutableMapOf<Long, ByteArray>()
             for (contact in contacts) {
+                ensureActive()
+                if (epochAtEntry != unlockEpoch) {
+                    // Re-lock raced us mid-loop. Zero anything we already
+                    // decrypted in this batch and bail without writing.
+                    for (s in result.values) s.fill(0)
+                    return@withContext null
+                }
                 if (totpSecretCache.containsKey(contact.id)) continue
+                if (failedDecryptIds.contains(contact.id)) continue
                 try {
                     val plaintext = TotpSecretCodec.decrypt(
                         TotpSecretCodec.EncryptedSecret(
@@ -414,16 +471,26 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                         ),
                         dek
                     )
-                    totpSecretCache[contact.id] = plaintext
+                    result[contact.id] = plaintext
                 } catch (e: Exception) {
-                    // Row is unreadable with our DEK — log loudly but
-                    // don't crash the whole Main state. A test that
-                    // writes ad-hoc row bytes will hit this path
-                    // rather than taking down the app.
+                    // Row is unreadable with our DEK — log once and
+                    // record the failure so we don't re-attempt on
+                    // every subsequent DAO emission.
                     Log.w("WhoAreWe", "Failed to decrypt totpSecret for id=${contact.id}", e)
+                    failedDecryptIds.add(contact.id)
                 }
             }
+            result
+        } ?: return
+        // Back on the caller's dispatcher (typically Main). One more
+        // epoch check before publishing — if `lock()` ran while the
+        // Default-dispatched block was returning, drop the work rather
+        // than reintroducing plaintext into a now-cleared cache.
+        if (epochAtEntry != unlockEpoch) {
+            for (s in newEntries.values) s.fill(0)
+            return
         }
+        totpSecretCache.putAll(newEntries)
     }
 
     fun updateDisplayName(name: String) {
@@ -786,7 +853,13 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
             onBiometricError("Session expired — please unlock again")
             return
         }
-        val effectiveDisplayName = withContext(Dispatchers.IO) {
+        // Snapshot the unlock epoch so we can detect a `lock()` racing
+        // against this pair flow (e.g. user backgrounds the app between
+        // biometric success and the IO block completing). Same shape as
+        // ensureCacheContains' epoch check — see Copilot round 2 on
+        // PR #38.
+        val epochAtEntry = unlockEpoch
+        val pairResult = withContext(Dispatchers.IO) {
             // Fetch the existing row up front (if any) so we can preserve
             // its user-owned fields on the replacement. The private key
             // decryption and ECDH derivation still happen *after* this
@@ -824,18 +897,17 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                         // the incoming pubkey is guaranteed-unique by the
                         // earlier dedup step in onQrScanned.
                         dao.replaceContact(replaceId, contact)
-                        totpSecretCache.remove(replaceId)
                         dao.getContactByPublicKey(pubKeyHex)?.id
                             ?: error("Replaced row vanished between write and lookup")
                     } else {
                         dao.insertContact(contact)
                     }
-                    // Populate the cache with a copy of the plaintext so
-                    // the tick loop sees the new contact on its next
-                    // emission. Copy rather than hand over so the finally
-                    // block below can still zero the transient buffer.
-                    totpSecretCache[newRowId] = sharedSecret.copyOf()
-                    storedName
+                    // Hand the plaintext back to the caller (on Main) for
+                    // the cache write — see the post-withContext block
+                    // for the epoch check. `copyOf` lets the finally
+                    // below zero the transient `sharedSecret` buffer
+                    // without disturbing the returned copy.
+                    Triple(storedName, newRowId, sharedSecret.copyOf())
                 } finally {
                     sharedSecret.fill(0)
                 }
@@ -843,6 +915,25 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                 ourPrivateKey.fill(0)
             }
         }
+        val (effectiveDisplayName, newRowId, plaintextCopy) = pairResult
+
+        // Cache mutations happen on the caller's dispatcher (typically
+        // Main) AFTER the IO block completes. The epoch check prevents
+        // a `lock()` that raced this pair flow from being undone — if
+        // the epoch advanced, drop the plaintext on the floor and skip
+        // the wizard advance. The DAO row was already written, but the
+        // ciphertext on disk is encrypted under the DEK that was in
+        // effect at pair time, so it's safe to leave there.
+        if (epochAtEntry != unlockEpoch) {
+            plaintextCopy.fill(0)
+            Log.w("WhoAreWe", "persistPairedContact: lock() raced the pair flow, dropping cache update")
+            return
+        }
+        if (replaceId != null) {
+            totpSecretCache.remove(replaceId)
+        }
+        totpSecretCache[newRowId] = plaintextCopy
+
         // Advance wizard: show our QR so they can scan us
         val tag = if (replaceId != null) "ReplaceContact" else "AddContact"
         Log.d("WhoAreWe", "$tag complete, advancing to ShowAfterScan")
@@ -901,16 +992,27 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
      *
      * Safe to call when already Locked (no-op for state) or in Setup
      * (no-op, the DEK hasn't been unwrapped yet).
+     *
+     * Increments [unlockEpoch] before clearing the cache so any in-flight
+     * [ensureCacheContains] decrypt loop running on [Dispatchers.Default]
+     * sees the epoch advance on its next iteration and bails out without
+     * writing back. See Copilot round 2 on PR #38.
      */
     fun lock() {
         mainStateJob?.cancel()
         mainStateJob = null
+        // Advance the epoch *before* zeroing/clearing so any in-flight
+        // ensureCacheContains loop racing this call sees the bumped
+        // value on its next iteration check (or its post-loop check)
+        // and discards its work.
+        unlockEpoch++
         totpDek?.fill(0)
         totpDek = null
         for (secret in totpSecretCache.values) {
             secret.fill(0)
         }
         totpSecretCache.clear()
+        failedDecryptIds.clear()
         _biometricRequest.value = null
         _pairStep.value = null
         _pendingNameCollision.value = null
