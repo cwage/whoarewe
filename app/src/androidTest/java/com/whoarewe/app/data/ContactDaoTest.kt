@@ -124,4 +124,64 @@ class ContactDaoTest {
         val identity = dao.getIdentityOnce()
         assertEquals("alice_updated", identity!!.displayName)
     }
+
+    // ── replaceContact (cwage/whoarewe#33) ──
+
+    @Test
+    fun replaceContact_swapsTheTargetedRowOnly() = runTest {
+        // Two contacts exist — "Alice" (which we will replace) and "Bob"
+        // (which must be left completely untouched). The assertion covers
+        // two invariants of the key-change warning's Replace path:
+        //   1. The old Alice row is gone.
+        //   2. The new Alice row carries the new key and secret.
+        //   3. The unrelated Bob row is not affected.
+        val oldAliceId = dao.insertContact(
+            TrustedContact(displayName = "Alice", publicKey = "oldkey", totpSecret = "oldsecret")
+        )
+        val bobId = dao.insertContact(
+            TrustedContact(displayName = "Bob", publicKey = "bobkey", totpSecret = "bobsecret")
+        )
+
+        dao.replaceContact(
+            oldAliceId,
+            TrustedContact(displayName = "Alice", publicKey = "newkey", totpSecret = "newsecret")
+        )
+
+        val all = dao.getAllContacts().first()
+        assertEquals(2, all.size)
+
+        // The old id is gone — the new row has a fresh auto-generated id.
+        assertNull(dao.getContactById(oldAliceId))
+
+        val newAlice = all.first { it.displayName == "Alice" }
+        assertEquals("newkey", newAlice.publicKey)
+        assertEquals("newsecret", newAlice.totpSecret)
+        assert(newAlice.id != oldAliceId) {
+            "replaceContact must insert a brand-new row, not reuse the old id"
+        }
+
+        // Bob is untouched.
+        val bob = dao.getContactById(bobId)
+        assertNotNull(bob)
+        assertEquals("bobkey", bob!!.publicKey)
+        assertEquals("bobsecret", bob.totpSecret)
+    }
+
+    @Test
+    fun replaceContact_missingOldIdStillInsertsNewRow() = runTest {
+        // Defensive: if the caller somehow hands in a stale id (e.g. the
+        // target was deleted between the UI showing the collision dialog
+        // and the user tapping Replace), the @Transaction should still
+        // leave the DB in a sensible state — the new row ends up inserted
+        // and nothing else is touched. The delete is a no-op in that case.
+        dao.replaceContact(
+            oldId = 999L,
+            replacement = TrustedContact(displayName = "Alice", publicKey = "newkey", totpSecret = "newsecret")
+        )
+
+        val all = dao.getAllContacts().first()
+        assertEquals(1, all.size)
+        assertEquals("Alice", all[0].displayName)
+        assertEquals("newkey", all[0].publicKey)
+    }
 }
