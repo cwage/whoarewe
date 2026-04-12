@@ -1,6 +1,7 @@
 package com.whoarewe.app.crypto
 
 import android.content.Context
+import android.os.Build
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.After
@@ -33,13 +34,15 @@ import java.security.KeyStore
  *   2. `deleteKeys` now does the keystore delete *first* (so a mid-op
  *      failure leaves a self-consistent state) and clears both halves
  *      atomically from the caller's perspective — see [deleteKeys_clearsBothAliasAndFiles].
- *   3. The probe in `ensureKeyStoreKey` (`isAliasHealthy`) catches *only*
- *      [android.security.keystore.KeyPermanentlyInvalidatedException], so
- *      legacy `UserNotAuthenticatedException` on API < R does not
- *      mis-classify a healthy time-bound key as dead. This branch can't
- *      be triggered from a non-interactive test (would need a real
- *      biometric re-enrollment) — it's enforced by code review and the
- *      narrow `catch` clause in [KeyManager.isAliasHealthy].
+ *   3. The probe in `ensureKeyStoreKey` (`isAliasHealthy`) whitelists
+ *      only [android.security.keystore.UserNotAuthenticatedException] as
+ *      "alias is fine" (the legacy API < R auth-window-expired case) and
+ *      treats everything else — `KeyPermanentlyInvalidatedException`,
+ *      `UnrecoverableKeyException`, `InvalidKeyException`, etc. — as
+ *      "alias is broken, regenerate." This branch can't be fully
+ *      exercised from a non-interactive test (the invalidation path needs
+ *      a real biometric re-enrollment) — it's enforced by code review
+ *      and the narrow `catch` clause in [KeyManager.isAliasHealthy].
  *
  * Skip behavior: the default API 28 x86_64 emulator system image used by
  * `scripts/local-instrumented.sh` and the `instrumented-tests (28)` CI job
@@ -55,10 +58,11 @@ import java.security.KeyStore
  *
  * Resolution: the [setUp] block probes the environment with a real
  * `ensureKeyStoreKey` call and uses [Assume.assumeNoException] to skip
- * the suite if keygen blows up. On API ≥ R emulators and on real
- * hardware (which is what should be running these tests anyway, since
- * the modern path is what the production code primarily targets), the
- * probe succeeds and every test runs normally.
+ * the suite **only on API < R**. On API ≥ R, if keygen fails that's a
+ * real regression and the test will fail loudly, not silently skip. On
+ * API ≥ R emulators and on real hardware (which is what should be
+ * running these tests anyway), the probe succeeds and every test runs
+ * normally.
  *
  * Manual verification of the path that can't be automated: on an API 33
  * emulator with a PIN configured, generate an identity, then change the
@@ -81,16 +85,21 @@ class KeyManagerInvalidationTest {
         // Probe the environment for working AndroidKeyStore key generation
         // with `setUserAuthenticationRequired(true)`. The default API 28
         // x86_64 emulator system image used by CI lacks a Gatekeeper HAL
-        // and throws here even with a PIN set. Skip the whole suite when
-        // we can't run it cleanly — see the class kdoc for the full
-        // explanation, including which CI jobs this affects.
+        // and throws here even with a PIN set. Skip the suite ONLY on
+        // API < R where this is a known environment limitation — on
+        // API ≥ R, if keygen fails that's a real regression and the test
+        // should fail loudly, not silently skip.
         try {
             keyManager.ensureKeyStoreKey()
         } catch (e: Exception) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                throw e
+            }
             Assume.assumeNoException(
-                "Skipping: AndroidKeyStore on this device cannot create " +
-                    "user-auth-required keys. Likely the API 28 emulator " +
-                    "image without a working Gatekeeper service.",
+                "Skipping: AndroidKeyStore on this device (API " +
+                    "${Build.VERSION.SDK_INT}) cannot create user-auth-" +
+                    "required keys. Likely the API 28 emulator image " +
+                    "without a working Gatekeeper service.",
                 e
             )
         }

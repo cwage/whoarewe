@@ -5,6 +5,7 @@ import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
+import android.security.keystore.UserNotAuthenticatedException
 import android.util.Log
 import androidx.biometric.BiometricManager
 import kotlinx.coroutines.Dispatchers
@@ -122,14 +123,14 @@ class KeyManager(private val context: Context) {
             // The only escape from that loop is uninstalling the app,
             // which most users will not figure out. See cwage/whoarewe#30.
             //
-            // The probe is intentionally narrow: only
-            // [KeyPermanentlyInvalidatedException] is treated as "alias is
-            // toast, regenerate." Anything else — most importantly
-            // `UserNotAuthenticatedException` on the legacy API < R
-            // time-bound auth path, which `cipher.init` *legitimately*
-            // throws when the auth window has lapsed on a perfectly
-            // healthy key — must leave the alias alone and let the real
-            // call site handle it. See [usesLegacyAuth] for that flow.
+            // The probe whitelists only [UserNotAuthenticatedException]
+            // as "alias is fine" — that's the legacy API < R time-bound
+            // auth path where `cipher.init` *legitimately* throws when the
+            // auth window has lapsed on a perfectly healthy key. Everything
+            // else ([KeyPermanentlyInvalidatedException], corrupted entries
+            // that throw `UnrecoverableKeyException`/`InvalidKeyException`,
+            // etc.) is treated as "alias is toast, drop and regenerate."
+            // See [isAliasHealthy] and [usesLegacyAuth] for details.
             if (isAliasHealthy(keyStore)) return
             // The alias is permanently invalidated. Drop it and fall
             // through to regeneration. We don't reuse [deleteKeys] here
@@ -180,16 +181,17 @@ class KeyManager(private val context: Context) {
     /**
      * Returns true if the existing keystore alias can still be initialized
      * for encryption — i.e. it has not been permanently invalidated by a
-     * biometric re-enrollment or device-credential change.
+     * biometric re-enrollment or device-credential change and is not
+     * otherwise corrupted.
      *
      * Used by [ensureKeyStoreKey] to detect the orphan-alias case described
-     * in cwage/whoarewe#30. Catches *only* [KeyPermanentlyInvalidatedException]
-     * — every other failure mode (most importantly the legacy
-     * `UserNotAuthenticatedException` thrown by `cipher.init` outside the
-     * auth window on API < R) is treated as "alias is fine, the caller's
-     * own error handling will deal with it." Mis-classifying a stale auth
-     * window as a dead alias would silently destroy a healthy identity on
-     * legacy devices.
+     * in cwage/whoarewe#30. The only exception that means "alias is
+     * fine, just can't be used right now" is [UserNotAuthenticatedException]
+     * on the legacy API < R time-bound auth path, where `cipher.init`
+     * legitimately throws when the auth window has lapsed on a perfectly
+     * healthy key. Everything else — [KeyPermanentlyInvalidatedException],
+     * `UnrecoverableKeyException`, `InvalidKeyException` from a corrupted
+     * entry, etc. — means the alias is broken and should be regenerated.
      */
     private fun isAliasHealthy(keyStore: KeyStore): Boolean {
         return try {
@@ -197,14 +199,19 @@ class KeyManager(private val context: Context) {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, key)
             true
-        } catch (e: KeyPermanentlyInvalidatedException) {
-            Log.w(TAG, "isAliasHealthy: existing alias is permanently invalidated", e)
-            false
-        } catch (e: Exception) {
-            // Anything else — `UserNotAuthenticatedException` on legacy
-            // auth, transient JCE provider hiccups, etc. — is "we can't
-            // tell from here, leave it alone." See class kdoc.
+        } catch (e: UserNotAuthenticatedException) {
+            // The key is fine — the user just hasn't authenticated within
+            // the validity window (`setUserAuthenticationValidityDurationSeconds`
+            // on API < R). Leave the alias alone; the caller's own
+            // biometric prompt will refresh the window and retry.
             true
+        } catch (e: Exception) {
+            // Everything else means the alias is broken: permanently
+            // invalidated by biometric re-enrollment, unrecoverable due
+            // to corruption, invalid key state, etc. Drop it so
+            // ensureKeyStoreKey can regenerate.
+            Log.w(TAG, "isAliasHealthy: existing alias is unusable, will regenerate", e)
+            false
         }
     }
 
