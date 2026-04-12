@@ -77,9 +77,10 @@ class RoomMigrationTest {
     fun openV3Schema_succeeds() {
         val dbName = MIGRATION_TEST_DB
 
-        // Create v3 directly via the helper. This loads `schemas/3.json`
-        // from the androidTest assets — if it's missing, this call throws
-        // and the test fails loudly with a "schema file not found" message,
+        // Create v3 directly via the helper. This loads
+        // `schemas/com.whoarewe.app.data.AppDatabase/3.json` from the
+        // androidTest assets — if it's missing, this call throws and the
+        // test fails loudly with a "schema file not found" message,
         // which is the signal that the schema export got disabled or the
         // assets srcDir wiring broke.
         val seedSecret = byteArrayOf(0x10, 0x20, 0x30)
@@ -109,8 +110,9 @@ class RoomMigrationTest {
         // Reopen via Room. No migrations are registered (there are none
         // yet) — the open call must succeed because the schema-on-disk
         // matches the entity classes' compiled hash. If the entities drift
-        // from `schemas/3.json` without bumping the version, Room throws
-        // `IllegalStateException` here with the schema-hash mismatch.
+        // from `schemas/com.whoarewe.app.data.AppDatabase/3.json` without
+        // bumping the version, Room throws `IllegalStateException` here
+        // with the schema-hash mismatch.
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val reopened = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
             .allowMainThreadQueries()

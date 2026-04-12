@@ -27,7 +27,8 @@ abstract class AppDatabase : RoomDatabase() {
                 //
                 // Every schema version bump must register an explicit
                 // `Migration(from, to)` here via `.addMigrations(...)`
-                // *and* commit a matching `app/schemas/<version>.json`
+                // *and* commit a matching
+                // `app/schemas/com.whoarewe.app.data.AppDatabase/<version>.json`
                 // (Room schema export is enabled in build.gradle.kts).
                 // The migration must have a `MigrationTestHelper`-based
                 // test in androidTest — see `RoomMigrationTest` for the
