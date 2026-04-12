@@ -73,6 +73,20 @@ These are the paths where it's easy to produce plausible-looking code that passe
 
 Rule: do not claim "the crypto is correct" without running test vectors, and do not hand-roll new crypto without a very explicit reason and human review.
 
+## Room migrations — schema bumps require an explicit `Migration`
+
+`AppDatabase` no longer uses `fallbackToDestructiveMigration()` (cwage/whoarewe#23). On any future schema version bump, every existing install upgrades through the registered `Migration(from, to)` objects — there is no silent table-drop fallback. The product's recovery story tolerates total data loss as a *visible* failure mode (lost device → re-pair in person), but a silent wipe on app upgrade is exactly the failure pattern that drives users to insecure workarounds, and that path is now closed off at the database layer.
+
+When you bump the schema:
+
+1. Increment `version = N` in the `@Database` annotation in `AppDatabase.kt`.
+2. Write a `Migration(N - 1, N)` object that performs the SQL transformation. Plain column adds typically mean an `ALTER TABLE … ADD COLUMN …`; column renames or table rebuilds need the standard SQLite "create new table, copy rows, drop old, rename" dance — Room will not do this for you.
+3. Pass it to `Room.databaseBuilder(...).addMigrations(MIGRATION_PREV_TO_NEXT).build()` in `getInstance`.
+4. Commit the freshly generated `app/schemas/com.whoarewe.app.data.AppDatabase/N.json` alongside the code change. Schema export is enabled in `app/build.gradle.kts` via the `room.schemaLocation` KSP arg, and the schema dir is wired into `androidTest` assets so `MigrationTestHelper` can find it.
+5. Add a new test in `app/src/androidTest/java/com/whoarewe/app/data/RoomMigrationTest.kt` that follows the same shape as `openV3Schema_succeeds`: create the *previous* version via `helper.createDatabase(name, N - 1)`, seed any rows you care about via raw SQL, run `helper.runMigrationsAndValidate(name, N, true, MIGRATION_PREV_TO_NEXT)`, and assert the post-migration data through the real Room DAO.
+
+If you ever genuinely need a destructive path for a specific old version (e.g. abandoning a pre-release schema that was never on a real device), use `fallbackToDestructiveMigrationFrom(specificOldVersions...)` rather than the blanket `fallbackToDestructiveMigration()` — that way the destructive path is opt-in per version and can't quietly catch a real user.
+
 ## Conventions
 
 - **Kotlin style**: match the existing code. No wildcard imports, four-space indentation, trailing commas on multi-line argument lists.

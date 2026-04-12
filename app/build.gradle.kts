@@ -19,6 +19,24 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Room schema export. Required by `MigrationTestHelper` so the
+    // androidTest harness can open a known historical schema and
+    // exercise the corresponding `Migration` object end-to-end. Every
+    // schema version bump must commit the matching
+    // `app/schemas/com.whoarewe.app.data.AppDatabase/<v>.json` file
+    // alongside the new `Migration(from, to)` — see CLAUDE.md
+    // "Room migrations" for the discipline this enforces (cwage/whoarewe#23).
+    ksp {
+        arg("room.schemaLocation", "$projectDir/schemas")
+    }
+
+    sourceSets {
+        // `srcDir` (singular, additive) rather than `srcDirs` so the
+        // conventional `app/src/androidTest/assets` location remains
+        // available to future androidTest assets that aren't Room schemas.
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
