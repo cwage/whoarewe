@@ -5,6 +5,7 @@ import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyPermanentlyInvalidatedException
 import android.security.keystore.KeyProperties
+import android.util.Log
 import androidx.biometric.BiometricManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -23,6 +24,7 @@ import javax.crypto.spec.GCMParameterSpec
 
 class KeyManager(private val context: Context) {
     companion object {
+        private const val TAG = "KeyManager"
         private const val KEYSTORE_ALIAS = "whoarewe_identity_key"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
 
@@ -99,10 +101,52 @@ class KeyManager(private val context: Context) {
         }
     }
 
-    private fun ensureKeyStoreKey() {
+    // `internal` rather than `private` so the androidTest harness can
+    // exercise the orphan-alias recovery path from cwage/whoarewe#30
+    // directly, without going through `getEncryptionCipher` (which
+    // requires biometric auth on the legacy API < R path and so isn't
+    // callable from a non-interactive test). See `KeyManagerInvalidationTest`.
+    internal fun ensureKeyStoreKey() {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
         keyStore.load(null)
-        if (keyStore.containsAlias(KEYSTORE_ALIAS)) return
+        if (keyStore.containsAlias(KEYSTORE_ALIAS)) {
+            // Probe the existing alias for permanent invalidation. Without
+            // this probe an orphaned-and-invalidated alias would block every
+            // subsequent identity creation forever: `containsAlias` returns
+            // true → we'd return early → the next `cipher.init` in
+            // `getEncryptionCipher` / `getDecryptionCipher` would throw
+            // `KeyPermanentlyInvalidatedException` → the catch block calls
+            // `deleteKeys()` (which can itself fail to clear the alias on
+            // some OEMs) → the user taps "create identity" → we land back
+            // here, the alias still exists, and the loop never breaks.
+            // The only escape from that loop is uninstalling the app,
+            // which most users will not figure out. See cwage/whoarewe#30.
+            //
+            // The probe is intentionally narrow: only
+            // [KeyPermanentlyInvalidatedException] is treated as "alias is
+            // toast, regenerate." Anything else — most importantly
+            // `UserNotAuthenticatedException` on the legacy API < R
+            // time-bound auth path, which `cipher.init` *legitimately*
+            // throws when the auth window has lapsed on a perfectly
+            // healthy key — must leave the alias alone and let the real
+            // call site handle it. See [usesLegacyAuth] for that flow.
+            if (isAliasHealthy(keyStore)) return
+            // The alias is permanently invalidated. Drop it and fall
+            // through to regeneration. We don't reuse [deleteKeys] here
+            // because that also clears the on-disk identity files, which
+            // the caller may still want — `getEncryptionCipher` is about
+            // to overwrite them with a fresh blob anyway, but the cleaner
+            // contract is "ensureKeyStoreKey only touches the keystore."
+            try {
+                keyStore.deleteEntry(KEYSTORE_ALIAS)
+            } catch (e: Exception) {
+                // If even the delete fails, log loudly and let the
+                // subsequent `keyGenerator.generateKey()` throw with its
+                // own diagnostic — there's nothing useful we can do here
+                // beyond making the failure visible in logcat.
+                Log.w(TAG, "ensureKeyStoreKey: failed to clear invalidated alias", e)
+            }
+        }
 
         val biometricAvailable = isBiometricAvailable()
 
@@ -131,6 +175,37 @@ class KeyManager(private val context: Context) {
         )
         keyGenerator.init(builder.build())
         keyGenerator.generateKey()
+    }
+
+    /**
+     * Returns true if the existing keystore alias can still be initialized
+     * for encryption — i.e. it has not been permanently invalidated by a
+     * biometric re-enrollment or device-credential change.
+     *
+     * Used by [ensureKeyStoreKey] to detect the orphan-alias case described
+     * in cwage/whoarewe#30. Catches *only* [KeyPermanentlyInvalidatedException]
+     * — every other failure mode (most importantly the legacy
+     * `UserNotAuthenticatedException` thrown by `cipher.init` outside the
+     * auth window on API < R) is treated as "alias is fine, the caller's
+     * own error handling will deal with it." Mis-classifying a stale auth
+     * window as a dead alias would silently destroy a healthy identity on
+     * legacy devices.
+     */
+    private fun isAliasHealthy(keyStore: KeyStore): Boolean {
+        return try {
+            val key = keyStore.getKey(KEYSTORE_ALIAS, null) ?: return false
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, key)
+            true
+        } catch (e: KeyPermanentlyInvalidatedException) {
+            Log.w(TAG, "isAliasHealthy: existing alias is permanently invalidated", e)
+            false
+        } catch (e: Exception) {
+            // Anything else — `UserNotAuthenticatedException` on legacy
+            // auth, transient JCE provider hiccups, etc. — is "we can't
+            // tell from here, leave it alone." See class kdoc.
+            true
+        }
     }
 
     fun getEncryptionCipher(): Cipher {
@@ -351,15 +426,52 @@ class KeyManager(private val context: Context) {
             iv.readBytes().contentEquals(SENTINEL_BLOB)
     }
 
-    private fun deleteKeys() {
-        encryptedKeyFile().delete()
-        ivFile().delete()
-        publicKeyFile().delete()
+    // `internal` for the same testing-from-androidTest reason as
+    // [ensureKeyStoreKey]. See `KeyManagerInvalidationTest`.
+    internal fun deleteKeys() {
+        // Order matters (cwage/whoarewe#30): clear the keystore alias FIRST,
+        // then the on-disk files. The previous order was the reverse, which
+        // had a nasty failure mode — if the keystore delete threw (not
+        // unheard-of on some OEM Android variants, or if the keystore is
+        // wedged), the on-disk files were already gone but the alias
+        // remained, leaving the app in an inconsistent state. Doing the
+        // keystore first means a mid-operation failure leaves a state
+        // that is at least self-consistent: files still exist, `hasKey()`
+        // still reports true, the user can retry. The probe in
+        // [ensureKeyStoreKey] is the last line of defense: even if both
+        // halves end up out of sync somehow, the next call into
+        // ensureKeyStoreKey will detect an invalidated alias and recover.
         try {
             val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE)
             keyStore.load(null)
             keyStore.deleteEntry(KEYSTORE_ALIAS)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            // Don't throw — the [ensureKeyStoreKey] probe added in
+            // cwage/whoarewe#30 will catch the orphaned alias on the next
+            // identity-creation attempt and clear it then. The fix-on-next
+            // -call path is tested in `ensureKeyStoreKey_regeneratesAfterManualDelete`
+            // (any leftover alias gets reclaimed by ensureKeyStoreKey).
+            // We just need a loud signal in logcat so the failure is
+            // diagnosable if it ever shows up in the wild.
+            Log.w(TAG, "deleteKeys: failed to clear keystore alias", e)
+        }
+
+        // Check `File.delete()` return values. The previous code ignored
+        // them, which would silently mask a storage-full or permissions
+        // failure that left identity files on disk after a "successful"
+        // delete. Log on failure but continue — the keystore alias is
+        // already gone, so the app is no longer in the bricked-loop
+        // state from cwage/whoarewe#30 even if a stray file lingers.
+        deleteIfExists(encryptedKeyFile(), "encrypted key")
+        deleteIfExists(ivFile(), "IV")
+        deleteIfExists(publicKeyFile(), "public key")
+    }
+
+    private fun deleteIfExists(file: File, label: String) {
+        if (!file.exists()) return
+        if (!file.delete()) {
+            Log.w(TAG, "deleteKeys: failed to delete $label file at ${file.absolutePath}")
+        }
     }
 }
 
