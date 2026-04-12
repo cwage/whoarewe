@@ -31,11 +31,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
+      - name: Decode keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > /tmp/whoarewe-release.jks
+
       - name: Build release APK
+        env:
+          KEYSTORE_PATH: /tmp/whoarewe-release.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
         run: ./gradlew :app:assembleRelease --no-daemon
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/release/app-release-unsigned.apk
+          files: app/build/outputs/apk/release/whoarewe-*.apk
           generate_release_notes: true

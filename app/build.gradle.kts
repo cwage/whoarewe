@@ -9,6 +9,9 @@ android {
     namespace = "com.whoarewe.app"
     compileSdk = 35
 
+    // Name the output APK "whoarewe-<version>.apk" instead of "app-release.apk".
+    setProperty("archivesBaseName", "whoarewe-${defaultConfig.versionName}")
+
     defaultConfig {
         applicationId = "com.whoarewe.app"
         minSdk = 28
@@ -37,9 +40,19 @@ android {
         getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file(System.getenv("KEYSTORE_PATH") ?: "/dev/null")
+            storePassword = System.getenv("KEYSTORE_PASSWORD")
+            keyAlias = "whoarewe"
+            keyPassword = System.getenv("KEYSTORE_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
