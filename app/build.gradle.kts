@@ -37,19 +37,24 @@ android {
         getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 
-    signingConfigs {
-        create("release") {
-            storeFile = file(System.getenv("KEYSTORE_PATH") ?: "/dev/null")
-            storePassword = System.getenv("KEYSTORE_PASSWORD")
-            keyAlias = "whoarewe"
-            keyPassword = System.getenv("KEYSTORE_PASSWORD")
+    val keystorePath = System.getenv("KEYSTORE_PATH")
+    if (keystorePath != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = "whoarewe"
+                keyPassword = System.getenv("KEYSTORE_PASSWORD")
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            if (keystorePath != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

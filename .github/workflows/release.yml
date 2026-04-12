@@ -31,14 +31,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      - name: Decode keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > /tmp/whoarewe-release.jks
-
       - name: Build release APK
         env:
-          KEYSTORE_PATH: /tmp/whoarewe-release.jks
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-        run: ./gradlew :app:assembleRelease --no-daemon
+        run: |
+          KEYSTORE_PATH="$(mktemp "${RUNNER_TEMP}/whoarewe-release.XXXXXX.jks")"
+          trap 'rm -f "$KEYSTORE_PATH"' EXIT
+          printf '%s' "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          export KEYSTORE_PATH
+          ./gradlew :app:assembleRelease --no-daemon
 
       - name: Rename APK
         run: mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/whoarewe-${GITHUB_REF_NAME}.apk
