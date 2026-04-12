@@ -9,9 +9,6 @@ android {
     namespace = "com.whoarewe.app"
     compileSdk = 35
 
-    // Name the output APK "whoarewe-<version>.apk" instead of "app-release.apk".
-    setProperty("archivesBaseName", "whoarewe-${defaultConfig.versionName}")
-
     defaultConfig {
         applicationId = "com.whoarewe.app"
         minSdk = 28
