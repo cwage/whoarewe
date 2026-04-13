@@ -1,6 +1,8 @@
 package com.whoarewe.app.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -27,11 +30,15 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -47,15 +54,28 @@ import com.whoarewe.app.crypto.TotpGenerator
 fun ContactListScreen(
     state: UiState.Main,
     onPair: () -> Unit,
+    onDeleteContact: (Long) -> Unit,
     onClearError: () -> Unit
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
+    var contactToDelete by remember { mutableStateOf<ContactWithCode?>(null) }
 
     LaunchedEffect(state.error) {
         if (state.error != null) {
             snackbarHostState.showSnackbar(state.error)
             onClearError()
         }
+    }
+
+    contactToDelete?.let { item ->
+        DeleteContactDialog(
+            contactName = item.contact.displayName,
+            onConfirm = {
+                onDeleteContact(item.contact.id)
+                contactToDelete = null
+            },
+            onDismiss = { contactToDelete = null }
+        )
     }
 
     Scaffold(
@@ -83,7 +103,8 @@ fun ContactListScreen(
                 } else {
                     ContactList(
                         contacts = state.contacts,
-                        secondsRemaining = state.secondsRemaining
+                        secondsRemaining = state.secondsRemaining,
+                        onLongPress = { contactToDelete = it }
                     )
                 }
             }
@@ -125,7 +146,8 @@ private fun EmptyState() {
 @Composable
 private fun ContactList(
     contacts: List<ContactWithCode>,
-    secondsRemaining: Int
+    secondsRemaining: Int,
+    onLongPress: (ContactWithCode) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize()
@@ -133,17 +155,20 @@ private fun ContactList(
         items(contacts, key = { it.contact.id }) { item ->
             ContactRow(
                 item = item,
-                secondsRemaining = secondsRemaining
+                secondsRemaining = secondsRemaining,
+                onLongPress = { onLongPress(item) }
             )
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ContactRow(
     item: ContactWithCode,
-    secondsRemaining: Int
+    secondsRemaining: Int,
+    onLongPress: () -> Unit
 ) {
     val progress = animateFloatAsState(
         targetValue = secondsRemaining / TotpGenerator.PERIOD_SECONDS.toFloat(),
@@ -153,6 +178,10 @@ private fun ContactRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .combinedClickable(
+                onClick = {},
+                onLongClick = onLongPress
+            )
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -191,6 +220,38 @@ private fun ContactRow(
             color = MaterialTheme.colorScheme.primary
         )
     }
+}
+
+@Composable
+private fun DeleteContactDialog(
+    contactName: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Remove $contactName?") },
+        text = {
+            Text(
+                "You will no longer be able to verify this person's identity. " +
+                    "To restore verification, you'll need to pair again in person " +
+                    "or over a trusted channel."
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(
+                    "Remove",
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        }
+    )
 }
 
 @Composable

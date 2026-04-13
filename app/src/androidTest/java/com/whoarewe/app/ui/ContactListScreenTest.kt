@@ -5,11 +5,14 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import com.whoarewe.app.ContactWithCode
 import com.whoarewe.app.UiState
 import com.whoarewe.app.data.Identity
 import com.whoarewe.app.data.TrustedContact
 import com.whoarewe.app.ui.screens.ContactListScreen
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 
@@ -29,6 +32,7 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = {},
+                onDeleteContact = {},
                 onClearError = {}
             )
         }
@@ -73,6 +77,7 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = {},
+                onDeleteContact = {},
                 onClearError = {}
             )
         }
@@ -93,6 +98,7 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = {},
+                onDeleteContact = {},
                 onClearError = {}
             )
         }
@@ -112,11 +118,84 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = { clicked = true },
+                onDeleteContact = {},
                 onClearError = {}
             )
         }
 
         composeTestRule.onNodeWithContentDescription("Pair with someone").performClick()
         assert(clicked)
+    }
+
+    // ── Delete contact (cwage/whoarewe#46) ──
+
+    private val dummyCiphertext = byteArrayOf(0, 0, 0, 0)
+    private val dummyIv = byteArrayOf(0, 0, 0, 0)
+
+    private fun stateWithBob() = UiState.Main(
+        identity = testIdentity,
+        contacts = listOf(
+            ContactWithCode(
+                contact = TrustedContact(
+                    id = 1,
+                    displayName = "Bob",
+                    publicKey = "aabb",
+                    encryptedTotpSecret = dummyCiphertext,
+                    totpSecretIv = dummyIv
+                ),
+                code = "123456"
+            )
+        ),
+        fingerprint = "AB:CD:EF"
+    )
+
+    @Test
+    fun longPress_showsDeleteConfirmation() {
+        composeTestRule.setContent {
+            ContactListScreen(
+                state = stateWithBob(),
+                onPair = {},
+                onDeleteContact = {},
+                onClearError = {}
+            )
+        }
+
+        composeTestRule.onNodeWithText("Bob").performTouchInput { longClick() }
+        composeTestRule.onNodeWithText("Remove Bob?").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Remove").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Cancel").assertIsDisplayed()
+    }
+
+    @Test
+    fun deleteConfirmation_cancel_dismissesDialog() {
+        composeTestRule.setContent {
+            ContactListScreen(
+                state = stateWithBob(),
+                onPair = {},
+                onDeleteContact = {},
+                onClearError = {}
+            )
+        }
+
+        composeTestRule.onNodeWithText("Bob").performTouchInput { longClick() }
+        composeTestRule.onNodeWithText("Cancel").performClick()
+        composeTestRule.onNodeWithText("Remove Bob?").assertDoesNotExist()
+    }
+
+    @Test
+    fun deleteConfirmation_confirm_callsCallback() {
+        var deletedId: Long? = null
+        composeTestRule.setContent {
+            ContactListScreen(
+                state = stateWithBob(),
+                onPair = {},
+                onDeleteContact = { deletedId = it },
+                onClearError = {}
+            )
+        }
+
+        composeTestRule.onNodeWithText("Bob").performTouchInput { longClick() }
+        composeTestRule.onNodeWithText("Remove").performClick()
+        assertEquals(1L, deletedId)
     }
 }

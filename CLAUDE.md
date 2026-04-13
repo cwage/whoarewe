@@ -95,6 +95,7 @@ If you ever genuinely need a destructive path for a specific old version (e.g. a
 - **PR bodies**: always use `gh pr create --body-file /tmp/pr.md` — see the user's global rule about shell mangling of backticks and colon-tagged strings.
 - **Commit scope**: prefer multiple small coherent commits over one mega-commit when the changes are logically separable.
 - **Before running destructive git operations** (reset --hard, force push, branch delete), ask.
+- **Test coverage for new features.** New functionality and significant changes must include tests at the appropriate layer (unit, instrumented, Maestro, or e2e). Don't ship untested code.
 
 ## Running tests — use local CI, NOT the attached phone
 
