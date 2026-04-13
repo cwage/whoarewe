@@ -1,6 +1,8 @@
 # Pairing and Verification
 
-WhoAreWe's job is to let two humans who have met once in person prove to each other, later and remotely, that they are who they say they are — without relying on any server, account, phone number, or social graph to vouch for it.
+> This document describes the cryptographic design of a **proof of concept**. The protocol has not been formally audited. See the [README](../README.md) for project status.
+
+WhoAreWe's job is to let two humans who have established trust once — whether face-to-face or over a channel they already trust — prove to each other, later and remotely, that they are who they say they are. No server, no account, no phone number, no social graph. The immediate motivation is the rise of convincing voice clones and deepfakes: when anyone can fake anyone's voice on a phone call, you need an out-of-band way to check that the person you're talking to actually holds the device you trust.
 
 ## The core idea
 
@@ -18,12 +20,12 @@ The pair step establishes a **shared secret**: 20 bytes that exist on both phone
 
 1. Alice and Bob each create an identity on their own phone, which generates an Ed25519 keypair. The private key is encrypted at rest by an Android Keystore key that can only be unlocked with the user's biometric or device credential. The public key is stored in plaintext — that is what public keys are for.
 2. Each phone renders its public key as a QR code: `whoarewe:v1:<base64url pubkey>:<display name>`.
-3. Alice scans Bob's QR. Her phone now knows Bob's public key.
+3. Alice gets Bob's QR — either by scanning it with the camera (if they're in the same room) or by importing a screenshot Bob sent over a trusted channel (Signal, iMessage, etc.). Her phone now knows Bob's public key.
 4. Alice biometrically unlocks her private key and her phone computes `shared_secret = X25519(alice_private, bob_public)`.
 5. Alice's phone stores a `TrustedContact` row containing Bob's name, Bob's public key, and that shared secret.
-6. Bob does the same in reverse: scans Alice's QR, derives `shared_secret = X25519(bob_private, alice_public)`.
+6. Bob does the same in reverse: gets Alice's QR (scan or import), derives `shared_secret = X25519(bob_private, alice_public)`.
 
-Because of how ECDH works, the two results are identical — even though neither private key ever left its device. An observer who captures both QR codes (or a camera shoulder-surfing the whole exchange) learns both public keys but cannot reconstruct the shared secret without at least one of the private keys.
+Because of how ECDH works, the two results are identical — even though neither private key ever left its device. An observer who intercepts both QR codes learns both public keys but cannot reconstruct the shared secret without at least one of the private keys. (This is also why sending QR screenshots over an encrypted channel like Signal is fine — even if the channel is later compromised, the public keys alone are useless.)
 
 ## Why two QR codes, not one
 
