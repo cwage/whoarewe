@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.longClick
 import com.whoarewe.app.ContactWithCode
 import com.whoarewe.app.UiState
@@ -148,7 +149,7 @@ class ContactListScreenTest {
             )
         }
 
-        composeTestRule.onNodeWithText("Your Identity").performClick()
+        composeTestRule.onNodeWithText("Your Identity").performTouchInput { click() }
         assertTrue(clicked)
     }
 
