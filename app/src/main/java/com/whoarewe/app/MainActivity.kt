@@ -333,6 +333,7 @@ class MainActivity : FragmentActivity() {
                                         onScanImage = {
                                             imagePickerLauncher.launch("image/*")
                                         },
+                                        onShowQr = { viewModel.showQr() },
                                         onDone = { viewModel.finishPairing() },
                                         onBack = { viewModel.finishPairing() },
                                         onClearError = { viewModel.clearError() }

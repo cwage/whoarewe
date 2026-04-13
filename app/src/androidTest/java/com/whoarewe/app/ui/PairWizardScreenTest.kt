@@ -18,6 +18,7 @@ class PairWizardScreenTest {
         step: PairStep,
         onScanCamera: () -> Unit = {},
         onScanImage: () -> Unit = {},
+        onShowQr: () -> Unit = {},
         onDone: () -> Unit = {},
         onBack: () -> Unit = {},
     ) {
@@ -27,6 +28,7 @@ class PairWizardScreenTest {
                 error = null,
                 onScanCamera = onScanCamera,
                 onScanImage = onScanImage,
+                onShowQr = onShowQr,
                 onDone = onDone,
                 onBack = onBack,
                 onClearError = {}
@@ -41,6 +43,7 @@ class PairWizardScreenTest {
         composeTestRule.onNodeWithText("Scan a contact's QR code").assertIsDisplayed()
         composeTestRule.onNodeWithText("Scan with camera").assertIsDisplayed()
         composeTestRule.onNodeWithText("Import from image").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Show my QR code").assertIsDisplayed()
     }
 
     @Test
@@ -64,6 +67,18 @@ class PairWizardScreenTest {
         )
 
         composeTestRule.onNodeWithText("Import from image").performClick()
+        assert(clicked)
+    }
+
+    @Test
+    fun scanStep_showQrCallsCallback() {
+        var clicked = false
+        setScreen(
+            step = PairStep.Scan,
+            onShowQr = { clicked = true }
+        )
+
+        composeTestRule.onNodeWithText("Show my QR code").performClick()
         assert(clicked)
     }
 

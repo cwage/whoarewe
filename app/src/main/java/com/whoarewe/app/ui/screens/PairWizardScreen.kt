@@ -13,6 +13,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -60,6 +61,7 @@ fun AddContactScreen(
     error: String?,
     onScanCamera: () -> Unit,
     onScanImage: () -> Unit,
+    onShowQr: () -> Unit,
     onDone: () -> Unit,
     onBack: () -> Unit,
     onClearError: () -> Unit
@@ -106,7 +108,8 @@ fun AddContactScreen(
             when (step) {
                 is PairStep.Scan -> ScanStep(
                     onScanCamera = onScanCamera,
-                    onScanImage = onScanImage
+                    onScanImage = onScanImage,
+                    onShowQr = onShowQr
                 )
                 is PairStep.Done -> DoneStep(
                     addedName = step.addedName,
@@ -122,7 +125,8 @@ fun AddContactScreen(
 @Composable
 private fun ScanStep(
     onScanCamera: () -> Unit,
-    onScanImage: () -> Unit
+    onScanImage: () -> Unit,
+    onShowQr: () -> Unit
 ) {
     Icon(
         imageVector = Icons.Default.QrCodeScanner,
@@ -168,6 +172,17 @@ private fun ScanStep(
         Icon(Icons.Default.Image, contentDescription = null)
         Spacer(modifier = Modifier.width(8.dp))
         Text("Import from image")
+    }
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    OutlinedButton(
+        onClick = onShowQr,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(Icons.Default.QrCode, contentDescription = null)
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("Show my QR code")
     }
 }
 
