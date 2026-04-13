@@ -31,16 +31,18 @@ tags:
 - assertVisible: "Scan with camera"
 - assertVisible: "Import from image"
 
-# Go back to contacts via the navigation back arrow.
-- tapOn: "Back"
+# Go back to contacts via the in-app navigation icon. Uses "Navigate up"
+# (not "Back") to avoid collision with the system navigation bar's back
+# button, which shares the "Back" content description on some emulators
+# and can cause Maestro to tap the wrong element.
+- tapOn: "Navigate up"
 
 # Verify we're back on the contact list
 - assertVisible: "WhoAreWe"
 - assertVisible: "No trusted contacts yet"
 
 # Test the identity bar → QR display flow.
-# The identity bar label is used for the tap.
 - tapOn: "Your Identity"
 - assertVisible: "My Identity"
-- tapOn: "Back"
+- tapOn: "Navigate up"
 - assertVisible: "WhoAreWe"
