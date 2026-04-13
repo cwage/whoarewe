@@ -127,6 +127,7 @@ class ContactListScreenTest {
                 ),
                 onPair = { clicked = true },
                 onShowQr = {},
+                onContactTap = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -147,6 +148,7 @@ class ContactListScreenTest {
                 ),
                 onPair = {},
                 onShowQr = { clicked = true },
+                onContactTap = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -258,6 +260,7 @@ class ContactListScreenTest {
                 state = stateWithBob(),
                 onPair = {},
                 onShowQr = {},
+                onContactTap = {},
                 onDeleteContact = { deletedId = it },
                 onClearError = {}
             )
