@@ -251,11 +251,15 @@ class MainActivity : FragmentActivity() {
                         ActivityResultContracts.GetContent()
                     ) { uri ->
                         if (uri != null) {
-                            val data = QrDecoder.decodeFromUri(context, uri)
-                            if (data != null) {
-                                viewModel.onQrScanned(data)
-                            } else {
-                                viewModel.onBiometricError("No QR code found in image")
+                            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+                                val data = QrDecoder.decodeFromUri(context, uri)
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                    if (data != null) {
+                                        viewModel.onQrScanned(data)
+                                    } else {
+                                        viewModel.onBiometricError("No QR code found in image")
+                                    }
+                                }
                             }
                         }
                     }

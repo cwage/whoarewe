@@ -30,7 +30,11 @@ object QrDecoder {
 
     fun decodeFromUri(context: Context, uri: Uri): String? {
         val bitmap = loadBitmap(context, uri) ?: return null
-        return decodeFromBitmap(bitmap)
+        return try {
+            decodeFromBitmap(bitmap)
+        } finally {
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
     }
 
     private fun decodeFromBitmap(bitmap: Bitmap): String? {
