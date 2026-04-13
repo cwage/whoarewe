@@ -957,6 +957,14 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
         _pairStep.value = null
     }
 
+    fun deleteContact(contactId: Long) {
+        viewModelScope.launch {
+            dao.deleteContactById(contactId)
+            totpSecretCache.remove(contactId)?.fill(0)
+            failedDecryptIds.remove(contactId)
+        }
+    }
+
     fun clearError() {
         val state = _uiState.value
         if (state is UiState.Main) {

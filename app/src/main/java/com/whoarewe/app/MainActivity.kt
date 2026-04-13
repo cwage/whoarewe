@@ -339,6 +339,7 @@ class MainActivity : FragmentActivity() {
                                 ContactListScreen(
                                     state = state,
                                     onPair = { viewModel.startPairing() },
+                                    onDeleteContact = { viewModel.deleteContact(it) },
                                     onClearError = { viewModel.clearError() }
                                 )
                             }

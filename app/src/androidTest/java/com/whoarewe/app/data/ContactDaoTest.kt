@@ -140,6 +140,30 @@ class ContactDaoTest {
         assertEquals("alice_updated", identity!!.displayName)
     }
 
+    @Test
+    fun deleteContactById_removesTargetOnly() = runTest {
+        val aliceId = dao.insertContact(contact(name = "Alice", publicKey = "a1"))
+        val bobId = dao.insertContact(contact(name = "Bob", publicKey = "a2"))
+
+        dao.deleteContactById(aliceId)
+
+        val contacts = dao.getAllContacts().first()
+        assertEquals(1, contacts.size)
+        assertEquals("Bob", contacts[0].displayName)
+        assertNull(dao.getContactById(aliceId))
+        assertNotNull(dao.getContactById(bobId))
+    }
+
+    @Test
+    fun deleteContactById_nonexistentId_isNoOp() = runTest {
+        dao.insertContact(contact(name = "Alice", publicKey = "a1"))
+
+        dao.deleteContactById(999L)
+
+        val contacts = dao.getAllContacts().first()
+        assertEquals(1, contacts.size)
+    }
+
     // ── replaceContact (cwage/whoarewe#33) ──
 
     @Test
