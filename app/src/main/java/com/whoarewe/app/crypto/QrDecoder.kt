@@ -37,7 +37,8 @@ object QrDecoder {
         }
     }
 
-    private fun decodeFromBitmap(bitmap: Bitmap): String? {
+    @androidx.annotation.VisibleForTesting
+    internal fun decodeFromBitmap(bitmap: Bitmap): String? {
         // Try at original resolution first.
         tryDecode(bitmap)?.let { return it }
 
