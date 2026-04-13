@@ -934,23 +934,18 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
         }
         totpSecretCache[newRowId] = plaintextCopy
 
-        // Advance wizard: show our QR so they can scan us
         val tag = if (replaceId != null) "ReplaceContact" else "AddContact"
-        Log.d("WhoAreWe", "$tag complete, advancing to ShowAfterScan")
-        _pairStep.value = PairStep.ShowAfterScan(effectiveDisplayName)
+        Log.d("WhoAreWe", "$tag complete, advancing to Done")
+        _pairStep.value = PairStep.Done(effectiveDisplayName)
         Log.d("WhoAreWe", "pairStep is now: ${_pairStep.value}")
     }
 
     fun startPairing() {
-        _pairStep.value = PairStep.Choose
+        _pairStep.value = PairStep.Scan
     }
 
-    fun showMyCodeFirst() {
-        _pairStep.value = PairStep.ShowFirst
-    }
-
-    fun readyToScan() {
-        _pairStep.value = PairStep.ScanAfterShow
+    fun showQr() {
+        _pairStep.value = PairStep.ShowQr
     }
 
     fun finishPairing() {

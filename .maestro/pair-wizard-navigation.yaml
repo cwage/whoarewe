@@ -1,5 +1,5 @@
 appId: com.whoarewe.app
-name: "Pair Wizard Navigation"
+name: "Add Contact Navigation"
 tags:
   - wizard
   - navigation
@@ -25,24 +25,22 @@ tags:
 # the short-form `tapOn` which matches text OR content-description.
 - tapOn: "Pair with someone"
 
-# Should see the wizard choose step
-- assertVisible: "Both of you need to scan each other's code. Who goes first?"
-- assertVisible: "Scan their code first"
-- assertVisible: "Import QR from image"
-- assertVisible: "Show my code first"
-
-# Test the "show first" path
-- tapOn: "Show my code first"
-- assertVisible: "Show your code"
-- assertVisible: "Next: Scan their code"
-
-# Go to scan step
-- tapOn: "Next: Scan their code"
-- assertVisible: "Now scan their QR code"
+# Should see the add-contact scan step (cwage/whoarewe#49: simplified
+# from the old five-step "who goes first" wizard)
+- assertVisible: "Scan a contact's QR code"
 - assertVisible: "Scan with camera"
 - assertVisible: "Import from image"
 
 # Go back to contacts. Same content-description-not-id reasoning as
 # the "Pair with someone" tap above — `"Back"` is the contentDescription
-# on the wizard's `Icons.AutoMirrored.Filled.ArrowBack` navigation icon.
+# on the screen's `Icons.AutoMirrored.Filled.ArrowBack` navigation icon.
 - tapOn: "Back"
+
+# Verify we're back on the contact list
+- assertVisible: "Your Identity"
+
+# Test the identity bar → QR display flow
+- tapOn: "Your Identity"
+- assertVisible: "My Identity"
+- tapOn: "Back"
+- assertVisible: "Your Identity"

@@ -32,6 +32,7 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -77,6 +78,7 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -98,6 +100,7 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -118,12 +121,33 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = { clicked = true },
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
         }
 
         composeTestRule.onNodeWithContentDescription("Pair with someone").performClick()
+        assert(clicked)
+    }
+
+    @Test
+    fun identityBar_tap_callsShowQr() {
+        var clicked = false
+        composeTestRule.setContent {
+            ContactListScreen(
+                state = UiState.Main(
+                    identity = testIdentity,
+                    fingerprint = "AB:CD:EF"
+                ),
+                onPair = {},
+                onShowQr = { clicked = true },
+                onDeleteContact = {},
+                onClearError = {}
+            )
+        }
+
+        composeTestRule.onNodeWithText("Your Identity").performClick()
         assert(clicked)
     }
 
@@ -155,6 +179,7 @@ class ContactListScreenTest {
             ContactListScreen(
                 state = stateWithBob(),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -172,6 +197,7 @@ class ContactListScreenTest {
             ContactListScreen(
                 state = stateWithBob(),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -189,6 +215,7 @@ class ContactListScreenTest {
             ContactListScreen(
                 state = stateWithBob(),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = { deletedId = it },
                 onClearError = {}
             )

@@ -54,6 +54,7 @@ import com.whoarewe.app.crypto.TotpGenerator
 fun ContactListScreen(
     state: UiState.Main,
     onPair: () -> Unit,
+    onShowQr: () -> Unit,
     onDeleteContact: (Long) -> Unit,
     onClearError: () -> Unit
 ) {
@@ -109,11 +110,12 @@ fun ContactListScreen(
                 }
             }
 
-            // My identity bar at bottom
+            // My identity bar at bottom — tap to show QR
             HorizontalDivider()
             IdentityBar(
                 displayName = state.identity.displayName,
-                fingerprint = state.fingerprint
+                fingerprint = state.fingerprint,
+                onClick = onShowQr
             )
         }
     }
@@ -257,9 +259,11 @@ private fun DeleteContactDialog(
 @Composable
 private fun IdentityBar(
     displayName: String,
-    fingerprint: String
+    fingerprint: String,
+    onClick: () -> Unit
 ) {
     Card(
+        onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
             .padding(12.dp),

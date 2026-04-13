@@ -40,7 +40,8 @@ import com.whoarewe.app.ui.screens.ContactListScreen
 import com.whoarewe.app.ui.screens.LockedScreen
 import com.whoarewe.app.ui.screens.NameCollisionDialog
 import com.whoarewe.app.ui.screens.PairStep
-import com.whoarewe.app.ui.screens.PairWizardScreen
+import com.whoarewe.app.ui.screens.AddContactScreen
+import com.whoarewe.app.ui.screens.QrDisplayScreen
 import com.whoarewe.app.ui.screens.SetupScreen
 import com.whoarewe.app.ui.theme.WhoAreWeTheme
 import kotlinx.coroutines.flow.first
@@ -191,12 +192,11 @@ class MainActivity : FragmentActivity() {
         // first frame the window composites is already blocked from screen
         // capture, MediaProjection recorders, recents thumbnails, and cast
         // displays. The LaunchedEffect below only *clears* the flag for the
-        // two pair-wizard steps that intentionally show the user's own QR
-        // (ShowFirst / ShowAfterScan). Previously the flag was only added
-        // from the LaunchedEffect, which left a composition-to-effect window
-        // where a MediaProjection recorder capturing continuously could
-        // sample frames of UiState.Main before the flag was applied. See
-        // cwage/whoarewe#22 (Copilot review, round 1).
+        // standalone QR display screen (ShowQr). Previously the flag was
+        // only added from the LaunchedEffect, which left a composition-to-
+        // effect window where a MediaProjection recorder capturing
+        // continuously could sample frames of UiState.Main before the flag
+        // was applied. See cwage/whoarewe#22 (Copilot review, round 1).
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         handleE2eIntent(intent)
         setContent {
@@ -211,13 +211,13 @@ class MainActivity : FragmentActivity() {
                     val pendingNameCollision by viewModel.pendingNameCollision.collectAsState()
 
                     // The window is FLAG_SECURE by default (set in onCreate).
-                    // We only *clear* the flag while the pair wizard is on
-                    // ShowFirst / ShowAfterScan, which intentionally display
-                    // the user's own QR — those screens must remain capturable
-                    // because manual pairing relies on `adb exec-out screencap
-                    // -p` working on them (see scripts/manual-pair.sh's
-                    // transfer_qr helper). Every other state — Loading, Setup,
-                    // and the rest of UiState.Main — stays secure.
+                    // We only *clear* the flag while the standalone QR display
+                    // screen is active (ShowQr) — the user's own QR must
+                    // remain capturable because manual pairing relies on
+                    // `adb exec-out screencap -p` working on it (see
+                    // scripts/manual-pair.sh's transfer_qr helper). Every
+                    // other state — Loading, Setup, and the rest of
+                    // UiState.Main — stays secure.
                     //
                     // FLAG_SECURE is enforced by SurfaceFlinger so it blocks
                     // the screenshot button, MediaProjection recorders, recents
@@ -227,8 +227,7 @@ class MainActivity : FragmentActivity() {
                     // See cwage/whoarewe#22.
                     val protectFromCapture = when (val state = uiState) {
                         is UiState.Main ->
-                            state.pairStep !is PairStep.ShowFirst &&
-                                state.pairStep !is PairStep.ShowAfterScan
+                            state.pairStep !is PairStep.ShowQr
                         else -> true
                     }
                     LaunchedEffect(protectFromCapture) {
@@ -307,15 +306,21 @@ class MainActivity : FragmentActivity() {
                                 )
                             }
 
-                            val pairStep = state.pairStep
-                            if (pairStep != null) {
-                                val publicKey = viewModel.keyManager.getPublicKeyBytes()
-                                if (publicKey != null) {
-                                    PairWizardScreen(
+                            when (val pairStep = state.pairStep) {
+                                is PairStep.ShowQr -> {
+                                    val publicKey = viewModel.keyManager.getPublicKeyBytes()
+                                    if (publicKey != null) {
+                                        QrDisplayScreen(
+                                            displayName = state.identity.displayName,
+                                            publicKey = publicKey,
+                                            fingerprint = state.fingerprint,
+                                            onBack = { viewModel.finishPairing() }
+                                        )
+                                    }
+                                }
+                                is PairStep.Scan, is PairStep.Done -> {
+                                    AddContactScreen(
                                         step = pairStep,
-                                        displayName = state.identity.displayName,
-                                        publicKey = publicKey,
-                                        fingerprint = state.fingerprint,
                                         error = state.error,
                                         onScanCamera = {
                                             val options = ScanOptions()
@@ -328,20 +333,20 @@ class MainActivity : FragmentActivity() {
                                         onScanImage = {
                                             imagePickerLauncher.launch("image/*")
                                         },
-                                        onShowFirst = { viewModel.showMyCodeFirst() },
-                                        onReadyToScan = { viewModel.readyToScan() },
                                         onDone = { viewModel.finishPairing() },
                                         onBack = { viewModel.finishPairing() },
                                         onClearError = { viewModel.clearError() }
                                     )
                                 }
-                            } else {
-                                ContactListScreen(
-                                    state = state,
-                                    onPair = { viewModel.startPairing() },
-                                    onDeleteContact = { viewModel.deleteContact(it) },
-                                    onClearError = { viewModel.clearError() }
-                                )
+                                null -> {
+                                    ContactListScreen(
+                                        state = state,
+                                        onPair = { viewModel.startPairing() },
+                                        onShowQr = { viewModel.showQr() },
+                                        onDeleteContact = { viewModel.deleteContact(it) },
+                                        onClearError = { viewModel.clearError() }
+                                    )
+                                }
                             }
                         }
                     }

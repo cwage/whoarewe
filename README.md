@@ -33,7 +33,7 @@ Requires JDK 21 and the Android SDK. `minSdk` 28, `targetSdk` 35.
 | --- | --- | --- |
 | Unit | `./gradlew :app:testDebugUnitTest` | Pure-JVM crypto math — ECDH, TOTP, QR codec |
 | Instrumented | `./gradlew :app:connectedDebugAndroidTest` | Room DB + crypto integration on a real Android VM |
-| Maestro | `maestro test .maestro/` | Smoke flows through the setup and pair wizard screens |
+| Maestro | `maestro test .maestro/` | Smoke flows through setup, add-contact, and QR display screens |
 | End-to-end | `./scripts/run-local-e2e.sh --kill-on-exit` | Two emulators, real biometric/PIN, full ECDH + TOTP handshake |
 
 The e2e harness drives two real emulators through identity creation, biometric unlock, and bidirectional pairing, then asserts both devices compute the same six-digit code. Its design, the debug intent seam it uses, and the deliberately known gaps are all documented in [`docs/testing.md`](docs/testing.md).
