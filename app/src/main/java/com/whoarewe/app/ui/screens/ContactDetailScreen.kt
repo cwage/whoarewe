@@ -83,7 +83,7 @@ fun ContactDetailScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = onDelete) {
+                TextButton(onClick = { showDeleteDialog = false; onDelete() }) {
                     Text(
                         "Remove",
                         color = MaterialTheme.colorScheme.error
