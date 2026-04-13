@@ -316,6 +316,9 @@ class MainActivity : FragmentActivity() {
                                             fingerprint = state.fingerprint,
                                             onBack = { viewModel.finishPairing() }
                                         )
+                                    } else {
+                                        viewModel.onBiometricError("Public key unavailable")
+                                        viewModel.finishPairing()
                                     }
                                 }
                                 is PairStep.Scan, is PairStep.Done -> {

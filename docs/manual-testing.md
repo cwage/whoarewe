@@ -32,7 +32,7 @@ Flags cover the non-default shapes:
 --pin NNNN           custom emulator PIN (default 1234)
 --port NNNN          emulator port (default 5554)
 --skip-install       don't touch existing installs on either side
---swap-roles         emulator scans first, phone scans first
+--swap-roles         swap which device is A (QR first) vs B (imports first)
 ```
 
 The rest of this doc is the "what's actually happening under the hood" reference for when the script breaks, or when you want to drive one of the steps by hand (e.g. enrolling a simulated fingerprint on the emulator instead of using the PIN bouncer).

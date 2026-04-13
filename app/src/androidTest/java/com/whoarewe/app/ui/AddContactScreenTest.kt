@@ -6,10 +6,11 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.whoarewe.app.ui.screens.AddContactScreen
 import com.whoarewe.app.ui.screens.PairStep
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
-class PairWizardScreenTest {
+class AddContactScreenTest {
 
     @get:Rule
     val composeTestRule = createComposeRule()
@@ -55,7 +56,7 @@ class PairWizardScreenTest {
         )
 
         composeTestRule.onNodeWithText("Scan with camera").performClick()
-        assert(clicked)
+        assertTrue(clicked)
     }
 
     @Test
@@ -67,7 +68,7 @@ class PairWizardScreenTest {
         )
 
         composeTestRule.onNodeWithText("Import from image").performClick()
-        assert(clicked)
+        assertTrue(clicked)
     }
 
     @Test
@@ -79,7 +80,7 @@ class PairWizardScreenTest {
         )
 
         composeTestRule.onNodeWithText("Show my QR code").performClick()
-        assert(clicked)
+        assertTrue(clicked)
     }
 
     @Test
@@ -99,6 +100,6 @@ class PairWizardScreenTest {
         )
 
         composeTestRule.onNodeWithText("Back to contacts").performClick()
-        assert(clicked)
+        assertTrue(clicked)
     }
 }

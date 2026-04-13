@@ -13,6 +13,7 @@ import com.whoarewe.app.data.Identity
 import com.whoarewe.app.data.TrustedContact
 import com.whoarewe.app.ui.screens.ContactListScreen
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -128,7 +129,7 @@ class ContactListScreenTest {
         }
 
         composeTestRule.onNodeWithContentDescription("Pair with someone").performClick()
-        assert(clicked)
+        assertTrue(clicked)
     }
 
     @Test
@@ -148,7 +149,7 @@ class ContactListScreenTest {
         }
 
         composeTestRule.onNodeWithText("Your Identity").performClick()
-        assert(clicked)
+        assertTrue(clicked)
     }
 
     // ── Delete contact (cwage/whoarewe#46) ──
