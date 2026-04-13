@@ -396,20 +396,20 @@ if [[ -z "$QR_A" || -z "$QR_B" ]]; then
     exit 1
 fi
 
-# Cross-inject. Each call triggers biometric/PIN, advances pair wizard to
-# ShowAfterScan, after which we tap "Done" to return to ContactList.
+# Cross-inject. Each call triggers biometric/PIN, advances to the Done
+# screen, after which we tap "Back to contacts" to return to ContactList.
 echo "[e2e] injecting Bob's QR into Alice..."
 inject_qr "$DEVICE_A" "$QR_B"
 enter_pin "$DEVICE_A"
-wait_for_text "$DEVICE_A" "Done" 30
-tap_text "$DEVICE_A" "Done"
+wait_for_text "$DEVICE_A" "Back to contacts" 30
+tap_text "$DEVICE_A" "Back to contacts"
 wait_for_text "$DEVICE_A" "Your Identity" 15
 
 echo "[e2e] injecting Alice's QR into Bob..."
 inject_qr "$DEVICE_B" "$QR_A"
 enter_pin "$DEVICE_B"
-wait_for_text "$DEVICE_B" "Done" 30
-tap_text "$DEVICE_B" "Done"
+wait_for_text "$DEVICE_B" "Back to contacts" 30
+tap_text "$DEVICE_B" "Back to contacts"
 wait_for_text "$DEVICE_B" "Your Identity" 15
 
 # The actual product invariant: both devices independently derived the same

@@ -49,7 +49,7 @@ fun QrDisplayScreen(
                 title = { Text("My Identity") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Navigate up")
                     }
                 }
             )
@@ -88,7 +88,7 @@ fun QrDisplayScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "Have your contact scan this code,\nthen scan theirs to complete the exchange.",
+                text = "Have your contact scan this code\nto add you on their device.",
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurfaceVariant

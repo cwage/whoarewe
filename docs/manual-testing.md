@@ -20,7 +20,7 @@ Plug your phone in (with USB debugging authorized) and run that. With no argumen
 4. Boot a fresh emulator via [`scripts/manual-emu.sh`](../scripts/manual-emu.sh) (wipes the AVD, sets PIN `1234`, installs APK, unlocks) — or reuse an already-running one on port 5554
 5. Launch the app on both sides
 6. Walk you through identity creation on each (you enter your real biometric on the phone and `1234` on the emulator)
-7. Walk you through the pair wizard step-by-step, automatically screencapping one device after each step and pushing the PNG into the other device's `Pictures/Screenshots/` directory with a `MEDIA_SCANNER_SCAN_FILE` broadcast so it appears as the newest photo in the photo picker
+7. Walk you through adding each other as contacts, automatically screencapping the QR from one device and pushing the PNG into the other device's `Pictures/Screenshots/` directory with a `MEDIA_SCANNER_SCAN_FILE` broadcast so it appears as the newest photo in the photo picker
 8. Scrape the rendered six-digit TOTP code off both devices' contact lists via `uiautomator dump`, retry a few times to absorb any TOTP window-boundary race, and assert they match
 
 Flags cover the non-default shapes:
@@ -32,7 +32,7 @@ Flags cover the non-default shapes:
 --pin NNNN           custom emulator PIN (default 1234)
 --port NNNN          emulator port (default 5554)
 --skip-install       don't touch existing installs on either side
---swap-roles         emulator is "show first", phone is "scan first"
+--swap-roles         swap which device is A (QR first) vs B (imports first)
 ```
 
 The rest of this doc is the "what's actually happening under the hood" reference for when the script breaks, or when you want to drive one of the steps by hand (e.g. enrolling a simulated fingerprint on the emulator instead of using the PIN bouncer).
@@ -116,9 +116,9 @@ Both devices should land on the Contacts screen with an empty contact list and a
 
 Scanning a QR off the other device's screen with the camera works in theory but is finicky when screens are different sizes and angles. It's usually easier to ferry a screenshot between the two.
 
-On whichever device goes first, tap the **Pair** icon (top right) → **Show my code first**. The device now shows its QR.
+On whichever device goes first, tap the identity bar at the bottom to show your QR code.
 
-On the other device, tap **Pair** → **Scan their code first** → **Import QR from image**. You need the first device's QR in this device's photo library.
+On the other device, tap the **Pair** icon (top right) → **Import from image**. You need the first device's QR in this device's photo library.
 
 **Phone-to-emulator transfer** (or any direction — the commands are symmetric, just swap the `-s` targets):
 
@@ -138,9 +138,11 @@ If the target is your real phone and you'd rather keep the screenshot out of `ad
 
 ### 6. Complete the exchange
 
-Once the QR screenshot is on the second device, pick it from its photo picker. Authenticate (fingerprint / PIN). The second device inserts a contact for the first device and advances to **Almost done**, which displays the second device's own QR.
+On the first device, tap the identity bar at the bottom to show your QR. Screenshot it and ferry it to the second device.
 
-Now repeat in reverse: screenshot the "Almost done" QR, ferry it to the first device, and import it there. Authenticate. Both devices should end up on a **Paired!** screen, tap Back to contacts.
+On the second device, tap the Pair icon → **Import from image**, pick the screenshot, and authenticate (fingerprint / PIN). The second device saves the contact and shows **Paired!** — tap **Back to contacts**.
+
+Now repeat in reverse: on the second device, tap the identity bar to show its QR, screenshot it, ferry it to the first device, and import it there via Pair → Import. Authenticate. Both devices should now show each other in the contact list.
 
 ### 7. Verify
 
@@ -148,7 +150,7 @@ Both devices should now show each other in the contact list, each with a rotatin
 
 ## What to verify: screen capture protection
 
-Since cwage/whoarewe#22, the app window is `FLAG_SECURE` by default — the flag is set in `MainActivity.onCreate` before the first frame is composed — and is cleared only while the pair wizard is on **Show your code** / **Almost done** (the two steps that display the user's own QR, which must stay captureable for manual pairing). Everything else (Loading, Setup, contact list, Choose / Scan their code / Paired!) stays secure.
+Since cwage/whoarewe#22, the app window is `FLAG_SECURE` by default — the flag is set in `MainActivity.onCreate` before the first frame is composed — and is cleared only while the **My Identity** QR display screen is active (the user's own QR must stay captureable for manual pairing). Everything else (Loading, Setup, contact list, Add Contact, Done) stays secure.
 
 `FLAG_SECURE` blocks the stock screenshot button, `MediaProjection` screen recorders, the task-switcher / recents thumbnail, and cast/mirror displays from capturing whatever the window is currently showing.
 
@@ -156,8 +158,8 @@ Quick sanity checks on a real device:
 
 - On the **contact list**: press the screenshot button. On modern Pixels (API 33+) you still get a PNG file, but the app surface composites as solid black — only the system status bar at the top is visible, no TOTP codes. Older Android versions show a "Can't take screenshot due to app policy" toast instead. Either way, the codes are not in the capture.
 - Background the app from the contact list with the recents gesture — the WhoAreWe tile in the task switcher should render as blank / no readable code list.
-- In the pair wizard on **Show your code** / **Almost done** (ShowFirst / ShowAfterScan): the screenshot button must still work and capture a real QR image. Manual pairing relies on `adb exec-out screencap -p` working here (see `scripts/manual-pair.sh`'s `transfer_qr`). If these screens also screenshot as black, the predicate in `MainActivity` is inverted.
-- On **Setup** and **Choose / Scan their code / Paired!**: screenshot behavior is also secure (no secrets on those screens, but defaulting to secure and only exempting the QR screens is simpler and avoids any window where the flag is off by mistake).
+- On the **My Identity** QR screen (tap the identity bar → shows your QR): the screenshot button must still work and capture a real QR image. Manual pairing relies on `adb exec-out screencap -p` working here (see `scripts/manual-pair.sh`'s `transfer_qr`). If this screen also screenshots as black, the predicate in `MainActivity` is inverted.
+- On **Setup**, **Add Contact**, and **Done**: screenshot behavior is also secure (no secrets on those screens, but defaulting to secure and only exempting the QR screen is simpler and avoids any window where the flag is off by mistake).
 
 What this does **not** block: a camera pointed at the screen, accessibility-service text exfiltration (tracked separately in cwage/whoarewe#28), or a rooted adversary reading the framebuffer. `FLAG_SECURE` is a screen-capture defence, not a full confidentiality guarantee.
 
@@ -166,4 +168,4 @@ What this does **not** block: a camera pointed at the screen, accessibility-serv
 - **API 28 / 29 use the legacy Keystore auth path.** On those API levels `KeyManager` configures the key with `setUserAuthenticationValidityDurationSeconds(10)` instead of `setUserAuthenticationParameters`, which forces `cipher.init()` to run *after* `BiometricPrompt` has refreshed the auth window. The app handles this automatically — you don't have to do anything — but if something breaks in the keygen or AddContact path on an old emulator and works fine on API 30+, that's where to start looking. The legacy path is covered by the `pairing (28)` job in `.github/workflows/e2e.yml` and was historically broken (cwage/whoarewe#6, fixed in PR #10).
 - **Photo picker grid caching.** If a freshly pushed PNG doesn't show up in the picker, the `MEDIA_SCANNER_SCAN_FILE` broadcast above usually fixes it. On some system images you may need to kill and relaunch the app so the picker re-reads the media store.
 - **Simulated fingerprint needs a real enrollment first.** `emu finger touch N` authenticates against fingerprint ID `N` — but `N` has to have been enrolled through the settings wizard. Fresh emulators have no enrolled prints.
-- **Screenshot contrast.** On phones with very dark UI themes, screenshotting the QR code can sometimes produce images ZXing struggles to decode. If a scan fails, try taking the screenshot while the pair wizard is on a bright/white background.
+- **Screenshot contrast.** On phones with very dark UI themes, screenshotting the QR code can sometimes produce images ZXing struggles to decode. If a scan fails, try taking the screenshot while the QR display is on a bright/white background.

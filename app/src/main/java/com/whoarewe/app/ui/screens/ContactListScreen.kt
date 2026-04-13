@@ -3,6 +3,7 @@ package com.whoarewe.app.ui.screens
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -54,6 +56,7 @@ import com.whoarewe.app.crypto.TotpGenerator
 fun ContactListScreen(
     state: UiState.Main,
     onPair: () -> Unit,
+    onShowQr: () -> Unit,
     onDeleteContact: (Long) -> Unit,
     onClearError: () -> Unit
 ) {
@@ -109,11 +112,12 @@ fun ContactListScreen(
                 }
             }
 
-            // My identity bar at bottom
+            // My identity bar at bottom — tap to show QR
             HorizontalDivider()
             IdentityBar(
                 displayName = state.identity.displayName,
-                fingerprint = state.fingerprint
+                fingerprint = state.fingerprint,
+                onClick = onShowQr
             )
         }
     }
@@ -257,7 +261,8 @@ private fun DeleteContactDialog(
 @Composable
 private fun IdentityBar(
     displayName: String,
-    fingerprint: String
+    fingerprint: String,
+    onClick: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -270,6 +275,7 @@ private fun IdentityBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .pointerInput(Unit) { detectTapGestures { onClick() } }
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {

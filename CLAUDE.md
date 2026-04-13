@@ -36,7 +36,7 @@ Core pair-and-verify loop works end-to-end on API 30+:
 
 - **Crypto**: Ed25519 keygen via BouncyCastle, Ed25519→X25519 conversion + ECDH shared-secret derivation, RFC 6238 TOTP, ZXing QR encode/decode. All in `app/src/main/java/com/whoarewe/app/crypto/`.
 - **Keystore**: `KeyManager` wraps Android Keystore with an AES-GCM key that encrypts the Ed25519 private key at rest. Biometric/device-credential unlock gated by `BiometricPrompt`.
-- **UI**: Jetpack Compose. Four screens — Setup, ContactList, PairWizard (Choose / ShowFirst / ScanAfterShow / ShowAfterScan / Done), QrDisplay. Single `WhoAreWeViewModel`.
+- **UI**: Jetpack Compose. Screens — Setup, ContactList, AddContact (Scan / Done), QrDisplay (standalone identity QR). Single `WhoAreWeViewModel`. The old five-step pair wizard was collapsed into a two-step add-contact flow per cwage/whoarewe#49.
 - **Data**: Room DB with two tables — `Identity` (one row) and `TrustedContact` (many rows).
 - **Tests**: unit (`app/src/test/`), instrumented (`PairingIntegrationTest` in `app/src/androidTest/`), Maestro flows (`.maestro/`), adb-driven two-emulator e2e (`scripts/e2e-pairing.sh`, workflow `.github/workflows/e2e.yml`). Full pyramid and known gaps in [`docs/testing.md`](docs/testing.md).
 

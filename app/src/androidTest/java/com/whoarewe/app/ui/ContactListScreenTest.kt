@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.longClick
 import com.whoarewe.app.ContactWithCode
 import com.whoarewe.app.UiState
@@ -13,6 +14,7 @@ import com.whoarewe.app.data.Identity
 import com.whoarewe.app.data.TrustedContact
 import com.whoarewe.app.ui.screens.ContactListScreen
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -32,6 +34,7 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -77,6 +80,7 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -98,6 +102,7 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -118,13 +123,34 @@ class ContactListScreenTest {
                     fingerprint = "AB:CD:EF"
                 ),
                 onPair = { clicked = true },
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
         }
 
         composeTestRule.onNodeWithContentDescription("Pair with someone").performClick()
-        assert(clicked)
+        assertTrue(clicked)
+    }
+
+    @Test
+    fun identityBar_tap_callsShowQr() {
+        var clicked = false
+        composeTestRule.setContent {
+            ContactListScreen(
+                state = UiState.Main(
+                    identity = testIdentity,
+                    fingerprint = "AB:CD:EF"
+                ),
+                onPair = {},
+                onShowQr = { clicked = true },
+                onDeleteContact = {},
+                onClearError = {}
+            )
+        }
+
+        composeTestRule.onNodeWithText("Your Identity").performTouchInput { click() }
+        assertTrue(clicked)
     }
 
     // ── Delete contact (cwage/whoarewe#46) ──
@@ -155,6 +181,7 @@ class ContactListScreenTest {
             ContactListScreen(
                 state = stateWithBob(),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -172,6 +199,7 @@ class ContactListScreenTest {
             ContactListScreen(
                 state = stateWithBob(),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -189,6 +217,7 @@ class ContactListScreenTest {
             ContactListScreen(
                 state = stateWithBob(),
                 onPair = {},
+                onShowQr = {},
                 onDeleteContact = { deletedId = it },
                 onClearError = {}
             )

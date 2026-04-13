@@ -1,0 +1,105 @@
+package com.whoarewe.app.ui
+
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import com.whoarewe.app.ui.screens.AddContactScreen
+import com.whoarewe.app.ui.screens.PairStep
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+
+class AddContactScreenTest {
+
+    @get:Rule
+    val composeTestRule = createComposeRule()
+
+    private fun setScreen(
+        step: PairStep,
+        onScanCamera: () -> Unit = {},
+        onScanImage: () -> Unit = {},
+        onShowQr: () -> Unit = {},
+        onDone: () -> Unit = {},
+        onBack: () -> Unit = {},
+    ) {
+        composeTestRule.setContent {
+            AddContactScreen(
+                step = step,
+                error = null,
+                onScanCamera = onScanCamera,
+                onScanImage = onScanImage,
+                onShowQr = onShowQr,
+                onDone = onDone,
+                onBack = onBack,
+                onClearError = {}
+            )
+        }
+    }
+
+    @Test
+    fun scanStep_showsScanOptions() {
+        setScreen(step = PairStep.Scan)
+
+        composeTestRule.onNodeWithText("Scan a contact's QR code").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Scan with camera").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Import from image").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Show my QR code").assertIsDisplayed()
+    }
+
+    @Test
+    fun scanStep_cameraCallsCallback() {
+        var clicked = false
+        setScreen(
+            step = PairStep.Scan,
+            onScanCamera = { clicked = true }
+        )
+
+        composeTestRule.onNodeWithText("Scan with camera").performClick()
+        assertTrue(clicked)
+    }
+
+    @Test
+    fun scanStep_importCallsCallback() {
+        var clicked = false
+        setScreen(
+            step = PairStep.Scan,
+            onScanImage = { clicked = true }
+        )
+
+        composeTestRule.onNodeWithText("Import from image").performClick()
+        assertTrue(clicked)
+    }
+
+    @Test
+    fun scanStep_showQrCallsCallback() {
+        var clicked = false
+        setScreen(
+            step = PairStep.Scan,
+            onShowQr = { clicked = true }
+        )
+
+        composeTestRule.onNodeWithText("Show my QR code").performClick()
+        assertTrue(clicked)
+    }
+
+    @Test
+    fun doneStep_showsSuccessMessage() {
+        setScreen(step = PairStep.Done(addedName = "Bob"))
+
+        composeTestRule.onNodeWithText("You and Bob are paired!").assertIsDisplayed()
+        composeTestRule.onNodeWithText("Back to contacts").assertIsDisplayed()
+    }
+
+    @Test
+    fun doneStep_backToContactsCallsCallback() {
+        var clicked = false
+        setScreen(
+            step = PairStep.Done(addedName = "Bob"),
+            onDone = { clicked = true }
+        )
+
+        composeTestRule.onNodeWithText("Back to contacts").performClick()
+        assertTrue(clicked)
+    }
+}

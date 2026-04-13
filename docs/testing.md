@@ -91,7 +91,7 @@ The QR strings fed to each device come from the same `QrCodeUtils.encode(display
 
 Three parts of production are deliberately skipped:
 
-1. **Pair wizard UI navigation on the receiving side.** The test injects QR data via a debug-only intent (`e2e_inject_qr`) rather than going through `ContactListScreen` → Pair icon → `PairWizardScreen.ChooseStep` → `ScanStep`. The receiving device's `pairStep` transitions `null → ShowAfterScan` without the intermediate `Choose` / `ShowFirst` / `ScanAfterShow` states ever being rendered. Nothing about the crypto changes — the UI state machine is simply not exercised on that side.
+1. **Add-contact UI navigation on the receiving side.** The test injects QR data via a debug-only intent (`e2e_inject_qr`) rather than going through `ContactListScreen` → Pair icon → `AddContactScreen` (scan step). The receiving device's `pairStep` transitions `null → Done` without the `Scan` step ever being rendered. Nothing about the crypto changes — the UI state machine is simply not exercised on that side.
 2. **Camera scanning and photo picker.** `ScanContract` and `QrDecoder.decodeFromUri` are not invoked at all. If a future change made the QR bitmap too dense, too low-contrast, or otherwise unreadable when photographed off a real screen, this test would not catch it. `QrCodeUtilsTest` still verifies the encode/decode round-trip in memory.
 3. **Real bitmap-to-camera round-trip.** No photons are involved. The test does not render the QR onto a framebuffer, screencap it, push the PNG to the other device, and feed it through the photo picker. That is precisely what the debug intent seam was introduced to dodge, because the photo picker on Pixel emulators is flaky enough to eat the test's reliability budget.
 

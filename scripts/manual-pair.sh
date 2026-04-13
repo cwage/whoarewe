@@ -11,8 +11,8 @@
 # TOTP match check.
 #
 # Device roles:
-#   A = "show first" side — creates the first QR (default: the phone)
-#   B = "scan first" side — imports A's QR, then shows its own (default: emu)
+#   A = device whose QR is transferred first (default: the phone)
+#   B = device that imports A's QR first (default: emu)
 #
 # Default flow:
 #   0. Detect the single USB-connected phone; error if zero or >1
@@ -22,13 +22,13 @@
 #      installs APK, unlocks) — or reuse an already-running one on $PORT
 #   4. Human: create identity on phone (biometric/PIN is yours)
 #   5. Human: create identity on emulator (PIN bouncer uses --pin)
-#   6. Pair wizard walkthrough:
-#        a. Phone: Pair → Show my code first
+#   6. Add contact walkthrough:
+#        a. Phone: tap identity bar → show QR
 #        b. Script ferries phone's QR into the emulator's gallery
-#        c. Emulator: Pair → Scan their code first → Import QR from image,
-#           pick newest, authenticate with PIN
-#        d. Script ferries emulator's QR back into the phone's gallery
-#        e. Phone: Next → Import QR from image, pick newest, authenticate
+#        c. Emulator: Pair → Import from image, pick newest, authenticate
+#        d. Emulator: tap identity bar → show QR
+#        e. Script ferries emulator's QR back into the phone's gallery
+#        f. Phone: Pair → Import from image, pick newest, authenticate
 #   7. Script scrapes both devices' contact lists via uiautomator dump,
 #      extracts the 6-digit TOTP code, asserts they match
 #
@@ -40,7 +40,7 @@
 #   scripts/manual-pair.sh --pin 9999           # non-default emulator PIN
 #   scripts/manual-pair.sh --port 5556          # emulator on different port
 #   scripts/manual-pair.sh --skip-install       # don't re-install on either
-#   scripts/manual-pair.sh --swap-roles         # emulator is A (show first)
+#   scripts/manual-pair.sh --swap-roles         # emulator is A (QR first)
 #
 # Between each pause, press ENTER when the indicated action is done, or
 # Ctrl+C to abort. The script only ever touches the two devices it has
@@ -201,8 +201,8 @@ else
     B="$EMU"
 fi
 echo
-echo "Device A (show first): $A"
-echo "Device B (scan first): $B"
+echo "Device A (QR first): $A"
+echo "Device B (imports first): $B"
 echo
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -227,7 +227,7 @@ echo "  5. You should land on the Contacts list."
 pause "Emulator identity created?"
 
 # ─────────────────────────────────────────────────────────────────────────
-# 7. Pair wizard walkthrough
+# 7. Add contact walkthrough
 # ─────────────────────────────────────────────────────────────────────────
 transfer_qr() {
     local from=$1 to=$2 label=$3
@@ -253,49 +253,55 @@ transfer_qr() {
 }
 
 echo
-echo "── PAIR WIZARD ──"
+echo "── ADD CONTACTS ──"
 echo
-echo "── Step 1: $A shows its code first ──"
+echo "── Step 1: $A shows its QR ──"
 echo "On $A:"
-echo "  1. Tap the Pair icon (top right)"
-echo "  2. Tap 'Show my code first'"
-echo "  3. You should land on 'Show your code' with your QR visible"
+echo "  1. Tap the identity bar at the bottom ('Your Identity')"
+echo "  2. You should see 'My Identity' with your QR visible"
 pause "$A is showing its QR?"
 
 transfer_qr "$A" "$B" "a-to-b"
 
-echo "── Step 2: $B imports A's QR and shows its own ──"
+echo "On $A:"
+echo "  1. Tap the Back arrow to return to the contact list"
+pause "$A is back on Contacts?"
+
+echo "── Step 2: $B imports A's QR ──"
 echo "On $B:"
 echo "  1. Tap the Pair icon (top right)"
-echo "  2. Tap 'Scan their code first'"
-echo "  3. Tap 'Import QR from image'"
-echo "  4. Pick the newest screenshot (filename manual-pair-a-to-b.png)"
-echo "  5. Authenticate at the biometric/PIN prompt"
+echo "  2. Tap 'Import from image'"
+echo "  3. Pick the newest screenshot (filename manual-pair-a-to-b.png)"
+echo "  4. Authenticate at the biometric/PIN prompt"
 if [[ "$B" == "$EMU" ]]; then
     echo "     (on the emulator, the PIN is $PIN)"
 fi
-echo "  6. $B should advance to 'Almost done' showing its own QR"
-pause "$B is on 'Almost done'?"
+echo "  5. $B should show 'Paired!' — tap 'Back to contacts'"
+pause "$B is back on Contacts?"
+
+echo "── Step 3: $B shows its QR ──"
+echo "On $B:"
+echo "  1. Tap the identity bar at the bottom ('Your Identity')"
+echo "  2. You should see 'My Identity' with your QR visible"
+pause "$B is showing its QR?"
 
 transfer_qr "$B" "$A" "b-to-a"
 
-echo "── Step 3: $A imports B's QR ──"
+echo "On $B:"
+echo "  1. Tap the Back arrow to return to the contact list"
+pause "$B is back on Contacts?"
+
+echo "── Step 4: $A imports B's QR ──"
 echo "On $A:"
-echo "  1. Tap 'Next: Scan their code'"
-echo "  2. Tap 'Import QR from image'"
+echo "  1. Tap the Pair icon (top right)"
+echo "  2. Tap 'Import from image'"
 echo "  3. Pick the newest screenshot (filename manual-pair-b-to-a.png)"
 echo "  4. Authenticate at the biometric/PIN prompt"
 if [[ "$A" == "$EMU" ]]; then
     echo "     (on the emulator, the PIN is $PIN)"
 fi
-echo "  5. $A should land on 'Paired!' — tap Done to return to Contacts"
-pause "$A is paired and back on Contacts?"
-
-echo "── Step 4: finish $B ──"
-echo "On $B:"
-echo "  1. Tap 'Done' on the 'Almost done' screen"
-echo "  2. $B should return to Contacts"
-pause "$B is back on Contacts?"
+echo "  5. $A should show 'Paired!' — tap 'Back to contacts'"
+pause "$A is back on Contacts?"
 
 # ─────────────────────────────────────────────────────────────────────────
 # 8. TOTP verification
