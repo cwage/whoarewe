@@ -41,6 +41,7 @@ import com.whoarewe.app.ui.screens.LockedScreen
 import com.whoarewe.app.ui.screens.NameCollisionDialog
 import com.whoarewe.app.ui.screens.PairStep
 import com.whoarewe.app.ui.screens.AddContactScreen
+import com.whoarewe.app.ui.screens.ContactDetailScreen
 import com.whoarewe.app.ui.screens.QrDisplayScreen
 import com.whoarewe.app.ui.screens.SetupScreen
 import com.whoarewe.app.ui.theme.WhoAreWeTheme
@@ -345,13 +346,29 @@ class MainActivity : FragmentActivity() {
                                     )
                                 }
                                 null -> {
-                                    ContactListScreen(
-                                        state = state,
-                                        onPair = { viewModel.startPairing() },
-                                        onShowQr = { viewModel.showQr() },
-                                        onDeleteContact = { viewModel.deleteContact(it) },
-                                        onClearError = { viewModel.clearError() }
-                                    )
+                                    val selectedContact = state.selectedContactId?.let { id ->
+                                        state.contacts.find { it.contact.id == id }
+                                    }
+                                    if (selectedContact != null) {
+                                        ContactDetailScreen(
+                                            item = selectedContact,
+                                            secondsRemaining = state.secondsRemaining,
+                                            onDelete = {
+                                                viewModel.deleteContact(selectedContact.contact.id)
+                                                viewModel.clearSelectedContact()
+                                            },
+                                            onBack = { viewModel.clearSelectedContact() }
+                                        )
+                                    } else {
+                                        ContactListScreen(
+                                            state = state,
+                                            onPair = { viewModel.startPairing() },
+                                            onShowQr = { viewModel.showQr() },
+                                            onContactTap = { viewModel.selectContact(it) },
+                                            onDeleteContact = { viewModel.deleteContact(it) },
+                                            onClearError = { viewModel.clearError() }
+                                        )
+                                    }
                                 }
                             }
                         }

@@ -57,6 +57,7 @@ fun ContactListScreen(
     state: UiState.Main,
     onPair: () -> Unit,
     onShowQr: () -> Unit,
+    onContactTap: (Long) -> Unit,
     onDeleteContact: (Long) -> Unit,
     onClearError: () -> Unit
 ) {
@@ -107,6 +108,7 @@ fun ContactListScreen(
                     ContactList(
                         contacts = state.contacts,
                         secondsRemaining = state.secondsRemaining,
+                        onTap = { onContactTap(it.contact.id) },
                         onLongPress = { contactToDelete = it }
                     )
                 }
@@ -151,6 +153,7 @@ private fun EmptyState() {
 private fun ContactList(
     contacts: List<ContactWithCode>,
     secondsRemaining: Int,
+    onTap: (ContactWithCode) -> Unit,
     onLongPress: (ContactWithCode) -> Unit
 ) {
     LazyColumn(
@@ -160,6 +163,7 @@ private fun ContactList(
             ContactRow(
                 item = item,
                 secondsRemaining = secondsRemaining,
+                onTap = { onTap(item) },
                 onLongPress = { onLongPress(item) }
             )
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
@@ -172,6 +176,7 @@ private fun ContactList(
 private fun ContactRow(
     item: ContactWithCode,
     secondsRemaining: Int,
+    onTap: () -> Unit,
     onLongPress: () -> Unit
 ) {
     val progress = animateFloatAsState(
@@ -183,7 +188,7 @@ private fun ContactRow(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
-                onClick = {},
+                onClick = onTap,
                 onLongClick = onLongPress
             )
             .padding(horizontal = 16.dp, vertical = 12.dp),

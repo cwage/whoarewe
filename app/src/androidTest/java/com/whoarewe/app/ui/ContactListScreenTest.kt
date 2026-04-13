@@ -35,6 +35,7 @@ class ContactListScreenTest {
                 ),
                 onPair = {},
                 onShowQr = {},
+                onContactTap = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -81,6 +82,7 @@ class ContactListScreenTest {
                 ),
                 onPair = {},
                 onShowQr = {},
+                onContactTap = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -103,6 +105,7 @@ class ContactListScreenTest {
                 ),
                 onPair = {},
                 onShowQr = {},
+                onContactTap = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -124,6 +127,7 @@ class ContactListScreenTest {
                 ),
                 onPair = { clicked = true },
                 onShowQr = {},
+                onContactTap = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -144,6 +148,7 @@ class ContactListScreenTest {
                 ),
                 onPair = {},
                 onShowQr = { clicked = true },
+                onContactTap = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -151,6 +156,41 @@ class ContactListScreenTest {
 
         composeTestRule.onNodeWithText("Your Identity").performTouchInput { click() }
         assertTrue(clicked)
+    }
+
+    @Test
+    fun contactRow_tap_callsCallback() {
+        var tappedId: Long? = null
+        val dummyCt = byteArrayOf(0, 0, 0, 0)
+        val dummyIvLocal = byteArrayOf(0, 0, 0, 0)
+        composeTestRule.setContent {
+            ContactListScreen(
+                state = UiState.Main(
+                    identity = testIdentity,
+                    contacts = listOf(
+                        ContactWithCode(
+                            contact = TrustedContact(
+                                id = 1,
+                                displayName = "Bob",
+                                publicKey = "aabb",
+                                encryptedTotpSecret = dummyCt,
+                                totpSecretIv = dummyIvLocal
+                            ),
+                            code = "123456"
+                        )
+                    ),
+                    fingerprint = "AB:CD:EF"
+                ),
+                onPair = {},
+                onShowQr = {},
+                onContactTap = { tappedId = it },
+                onDeleteContact = {},
+                onClearError = {}
+            )
+        }
+
+        composeTestRule.onNodeWithText("Bob").performClick()
+        assertEquals(1L, tappedId)
     }
 
     // ── Delete contact (cwage/whoarewe#46) ──
@@ -182,6 +222,7 @@ class ContactListScreenTest {
                 state = stateWithBob(),
                 onPair = {},
                 onShowQr = {},
+                onContactTap = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -200,6 +241,7 @@ class ContactListScreenTest {
                 state = stateWithBob(),
                 onPair = {},
                 onShowQr = {},
+                onContactTap = {},
                 onDeleteContact = {},
                 onClearError = {}
             )
@@ -218,6 +260,7 @@ class ContactListScreenTest {
                 state = stateWithBob(),
                 onPair = {},
                 onShowQr = {},
+                onContactTap = {},
                 onDeleteContact = { deletedId = it },
                 onClearError = {}
             )

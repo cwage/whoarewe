@@ -181,6 +181,14 @@ digit_events+=( KEYCODE_ENTER )
 "$ADB" -s "$SERIAL" shell input keyevent "${digit_events[@]}"
 sleep 0.5
 
+# Disable the stylus handwriting overlay that pops over every text input on
+# Pixel emulator images with the Google keyboard. Covers all three namespaces
+# because the setting moved between API levels.
+echo "[manual-emu] disabling stylus handwriting..."
+"$ADB" -s "$SERIAL" shell settings put secure stylus_handwriting_enabled 0 >/dev/null 2>&1 || true
+"$ADB" -s "$SERIAL" shell settings put system stylus_handwriting_enabled 0 >/dev/null 2>&1 || true
+"$ADB" -s "$SERIAL" shell settings put global stylus_handwriting_enabled 0 >/dev/null 2>&1 || true
+
 echo "[manual-emu] launching com.whoarewe.app..."
 "$ADB" -s "$SERIAL" shell am start -n com.whoarewe.app/.MainActivity >/dev/null
 
