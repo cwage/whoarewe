@@ -20,14 +20,14 @@ The pair step establishes a **shared secret**: 20 bytes that exist on both phone
 
 1. Alice and Bob each create an identity on their own phone, which generates an Ed25519 keypair. The private key is encrypted at rest by an Android Keystore key that can only be unlocked with the user's biometric or device credential. The public key is stored in plaintext — that is what public keys are for.
 2. Each phone renders its public key as a QR code: `whoarewe:v1:<base64url pubkey>:<display name>`.
-3. Alice gets Bob's QR — either by scanning it with the camera (if they're in the same room) or by importing a screenshot Bob sent over a trusted channel (Signal, iMessage, etc.). Her phone now knows Bob's public key.
+3. Alice gets Bob's QR — either by scanning it with the camera (if they're in the same room) or by importing a screenshot Bob sent over a channel she already trusts. Her phone now knows Bob's public key.
 4. Alice biometrically unlocks her private key and her phone derives a shared secret: Ed25519 keys are converted to X25519, the ECDH agreement is SHA-256 hashed, and the first 20 bytes become the TOTP key.
 5. Alice's phone stores a `TrustedContact` row containing Bob's name, Bob's public key, and that shared secret.
 6. Bob does the same in reverse: gets Alice's QR (scan or import), derives `shared_secret = X25519(bob_private, alice_public)`.
 
 Because of how ECDH works, the two results are identical — even though neither private key ever left its device. An observer who intercepts both QR codes learns both public keys but cannot reconstruct the shared secret without at least one of the private keys.
 
-**A note on remote pairing:** Sending QR screenshots over an encrypted channel like Signal is safe from eavesdroppers — the public keys alone are useless. But remote pairing trusts the channel for *authenticity*, not just encryption. If an attacker could replace the QR in transit (e.g. a compromised Signal account), they could substitute their own public key and MITM the pairing. The protection is that you trust the channel to deliver messages from who it says they're from — the same trust you already place in it for everything else you use it for.
+**A note on remote pairing:** Sending QR screenshots over any trusted channel is safe from eavesdroppers — the public keys alone are useless. But remote pairing trusts the channel for *authenticity*, not just encryption. If an attacker could replace the QR in transit, they could substitute their own public key and MITM the pairing. The protection is that you trust the channel to deliver messages from who it says they're from — the same trust you already place in it for everything else you use it for.
 
 ## Why two QR codes, not one
 
