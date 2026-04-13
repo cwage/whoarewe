@@ -39,8 +39,10 @@ object QrDecoder {
 
     @androidx.annotation.VisibleForTesting
     internal fun decodeFromBitmap(bitmap: Bitmap): String? {
+        val reader = MultiFormatReader()
+
         // Try at original resolution first.
-        tryDecode(bitmap)?.let { return it }
+        tryDecode(bitmap, reader)?.let { return it }
 
         // Retry at downscaled resolutions to work around aliasing.
         for (scale in RETRY_SCALES) {
@@ -49,7 +51,7 @@ object QrDecoder {
             if (sw < 100 || sh < 100) continue
             val scaled = Bitmap.createScaledBitmap(bitmap, sw, sh, false)
             try {
-                tryDecode(scaled)?.let { return it }
+                tryDecode(scaled, reader)?.let { return it }
             } finally {
                 if (scaled !== bitmap) scaled.recycle()
             }
@@ -57,7 +59,7 @@ object QrDecoder {
         return null
     }
 
-    private fun tryDecode(bitmap: Bitmap): String? {
+    private fun tryDecode(bitmap: Bitmap, reader: MultiFormatReader): String? {
         val width = bitmap.width
         val height = bitmap.height
         val pixels = IntArray(width * height)
@@ -67,7 +69,7 @@ object QrDecoder {
         val binaryBitmap = BinaryBitmap(HybridBinarizer(source))
 
         return try {
-            MultiFormatReader().decode(binaryBitmap, DECODE_HINTS).text
+            reader.decode(binaryBitmap, DECODE_HINTS).text
         } catch (e: Exception) {
             null
         }
