@@ -116,6 +116,7 @@ sealed class UiState {
         val fingerprint: String = "",
         val secondsRemaining: Int = TotpGenerator.PERIOD_SECONDS.toInt(),
         val pairStep: PairStep? = null,
+        val selectedContactId: Long? = null,
         val error: String? = null
     ) : UiState()
 }
@@ -139,6 +140,7 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
     val pendingNameCollision: StateFlow<PendingNameCollision?> = _pendingNameCollision.asStateFlow()
 
     private val _pairStep = MutableStateFlow<PairStep?>(null)
+    private val _selectedContactId = MutableStateFlow<Long?>(null)
 
     private var pendingDisplayName: String? = null
 
@@ -371,7 +373,8 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                         _uiState.value = state.copy(
                             contacts = contacts,
                             secondsRemaining = remaining,
-                            pairStep = _pairStep.value
+                            pairStep = _pairStep.value,
+                            selectedContactId = _selectedContactId.value
                         )
                     }
 
@@ -384,7 +387,11 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
             // on demand — this means the unlock path doesn't need a
             // separate "decrypt all rows" pass, and post-upgrade rows get
             // folded into the cache on the first emission after unlock.
-            dao.getAllContacts().combine(_pairStep) { contacts, pairStep ->
+            combine(
+                dao.getAllContacts(),
+                _pairStep,
+                _selectedContactId
+            ) { contacts, pairStep, selectedContactId ->
                 val now = System.currentTimeMillis()
                 ensureCacheContains(contacts)
                 val withCodes = contacts.map { contact ->
@@ -402,7 +409,8 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
                     contacts = withCodes,
                     fingerprint = fingerprint,
                     secondsRemaining = remaining,
-                    pairStep = pairStep
+                    pairStep = pairStep,
+                    selectedContactId = selectedContactId
                 )
             }.collect { mainState ->
                 _uiState.value = mainState
@@ -950,6 +958,14 @@ class WhoAreWeViewModel(application: Application) : AndroidViewModel(application
 
     fun finishPairing() {
         _pairStep.value = null
+    }
+
+    fun selectContact(contactId: Long) {
+        _selectedContactId.value = contactId
+    }
+
+    fun clearSelectedContact() {
+        _selectedContactId.value = null
     }
 
     fun deleteContact(contactId: Long) {
