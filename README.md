@@ -1,11 +1,21 @@
 # WhoAreWe
 
-Android app for pairwise identity verification over untrusted channels. After a one-time in-person pairing, each party can prove to the other that a later phone call, text, or email actually came from them — by reading a shared six-digit code that only the two paired devices can generate.
+> **Status: Proof of concept.** This is a working prototype that demonstrates the idea end-to-end. It is not audited, not hardened, and not ready for real-world security decisions. Use it to kick the tires and think about the problem — not to protect anything that matters yet.
+
+## The problem
+
+Voice cloning and deepfakes are cheap and getting cheaper. Caller ID is trivially spoofed. When someone calls you claiming to be your spouse, your parent, or your business partner, there is no reliable way to confirm it over the phone — and the tools that could fake their voice convincingly already exist today.
+
+WhoAreWe is an experiment in solving this with commodity cryptography and zero infrastructure. Two people pair their phones once — in person, or by exchanging QR screenshots over any channel they already trust — and from then on each phone displays a rotating six-digit code for the other. To verify a suspicious call, you just ask: *"What does your code for me say right now?"* Only the real person's physical device can answer correctly.
+
+No server, no account, no network required. The verification works even if both phones are in airplane mode.
 
 ## How it works (tl;dr)
 
-1. **Pair once, in person.** Two people who already trust each other (because they're in the same room) scan each other's QR codes. Under the hood this is an X25519 ECDH exchange that leaves both phones holding the same 20-byte shared secret. No network, no server, no account.
+1. **Pair once, over a trusted channel.** Two people who already trust each other exchange QR codes — scanning in person, or screenshotting and sending over any channel they trust. Under the hood this is an X25519 ECDH exchange that leaves both phones holding the same 20-byte shared secret. No network, no server, no account.
 2. **Verify later, remotely.** The shared secret is fed into a TOTP generator. Each contact row displays a rotating six-digit code. If "Bob" calls Alice a week later, she asks him to read his code. If it matches the one her phone currently shows for Bob, the caller has Bob's actual device.
+
+**What this doesn't do:** WhoAreWe doesn't help you figure out who someone is in the first place. It assumes you already know — because you're standing next to them, or because you trust the channel you're exchanging QR codes over. What it does is carry that trust forward in time: the next time that person contacts you from an unknown number or a new email address, you can verify it's them. The initial authentication is your problem; the ongoing verification is the app's.
 
 See [`docs/pairing.md`](docs/pairing.md) for the full explainer, including why pairing needs two QR codes instead of one, what the QR codes do and don't contain, and what the threat model actually buys you.
 
