@@ -223,7 +223,7 @@ private fun ContactRow(
 }
 
 @Composable
-fun DeleteContactDialog(
+private fun DeleteContactDialog(
     contactName: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit
