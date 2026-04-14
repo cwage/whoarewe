@@ -47,6 +47,8 @@ But pairing is symmetric: both phones need the shared secret, and Bob's phone st
 
 There is no session key, no nonce, no handshake material. The QR code is a business card. Its "secrecy" is not what keeps the system safe — the secrecy of the private keys, locked inside each phone's Keystore, is.
 
+In practice this means you can share your QR code freely in any channel where you're confident recipients know it came from you. If you're in a group chat with several people you trust, posting your QR for all of them to see is fine — an observer who captures both sides' public keys still cannot derive the shared secret without a private key. The only thing that matters is that the person who scans your QR trusts it actually came from you, not that the QR itself stayed hidden.
+
 This is also why the end-to-end test (see [`testing.md`](testing.md)) can read each device's QR payload via a debug intent instead of going through the camera: the payload is a pure function of data that already exists on disk the moment an identity is created, and no amount of careful ceremony around *how* it is displayed changes what the next phone does with it.
 
 ## From shared secret to six-digit code
