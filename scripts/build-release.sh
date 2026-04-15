@@ -17,18 +17,18 @@
 set -euo pipefail
 
 if [[ -z "${KEYSTORE_PATH:-}" ]]; then
-    echo >&2 "error: KEYSTORE_PATH is not set"
+    echo >&2 "ERROR: KEYSTORE_PATH is not set"
     echo >&2 "  export KEYSTORE_PATH=/path/to/whoarewe-release.jks"
     exit 1
 fi
 
 if [[ -z "${KEYSTORE_PASSWORD:-}" ]]; then
-    echo >&2 "error: KEYSTORE_PASSWORD is not set"
+    echo >&2 "ERROR: KEYSTORE_PASSWORD is not set"
     exit 1
 fi
 
 if [[ ! -f "$KEYSTORE_PATH" ]]; then
-    echo >&2 "error: keystore not found at $KEYSTORE_PATH"
+    echo >&2 "ERROR: keystore not found at $KEYSTORE_PATH"
     exit 1
 fi
 
@@ -38,12 +38,12 @@ export KEYSTORE_PATH KEYSTORE_PASSWORD
 
 APK_SRC="app/build/outputs/apk/release/app-release.apk"
 if [[ ! -f "$APK_SRC" ]]; then
-    echo >&2 "error: expected APK not found at $APK_SRC"
+    echo >&2 "ERROR: expected APK not found at $APK_SRC"
     exit 1
 fi
 
-# Use git tag if on one, otherwise "dev".
-VERSION=$(git describe --tags --exact-match 2>/dev/null || echo "dev")
+# VERSION override > CI ref name > exact git tag > "dev".
+VERSION="${VERSION:-${GITHUB_REF_NAME:-$(git describe --tags --exact-match 2>/dev/null || echo "dev")}}"
 DEST="whoarewe-${VERSION}.apk"
 
 cp "$APK_SRC" "$DEST"
