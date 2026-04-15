@@ -40,13 +40,10 @@ jobs:
           printf '%s' "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > "$KEYSTORE_PATH"
           chmod 600 "$KEYSTORE_PATH"
           export KEYSTORE_PATH
-          ./gradlew :app:assembleRelease --no-daemon
-
-      - name: Rename APK
-        run: mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/whoarewe-${GITHUB_REF_NAME}.apk
+          scripts/build-release.sh
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/release/whoarewe-*.apk
+          files: whoarewe-*.apk
           generate_release_notes: true
